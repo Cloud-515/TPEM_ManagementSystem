@@ -1,0 +1,628 @@
+﻿<?xml version="1.0" encoding="UTF-8"?>
+<Document Format="Modbus Slave Document" Version="1.0" xmlns:dt="urn:schemas-microsoft-com:datatypes">
+  <MB8_SerialLine>
+    <TransmitMode dt:dt="string">RTU</TransmitMode>
+  </MB8_SerialLine>
+  <MB8_SlaveList>
+    <MB8_Slave>
+      <SlaveId dt:dt="int">95</SlaveId>
+      <Name dt:dt="string">一号主水泵</Name>
+      <MB8_FunctionList>
+        <MB8_Function>
+          <FunctionCode dt:dt="int">3</FunctionCode>
+          <StartAddress dt:dt="hex">1581</StartAddress>
+          <Quantity dt:dt="int">58</Quantity>
+          <MB8_RegisterList>
+            <MB8_Register dt:dt="int">17244</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">17243</MB8_Register>
+            <MB8_Register dt:dt="int">32768</MB8_Register>
+            <MB8_Register dt:dt="int">17244</MB8_Register>
+            <MB8_Register dt:dt="int">19661</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">17342</MB8_Register>
+            <MB8_Register dt:dt="int">32768</MB8_Register>
+            <MB8_Register dt:dt="int">17342</MB8_Register>
+            <MB8_Register dt:dt="int">6554</MB8_Register>
+            <MB8_Register dt:dt="int">17342</MB8_Register>
+            <MB8_Register dt:dt="int">49152</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">16908</MB8_Register>
+            <MB8_Register dt:dt="int">52429</MB8_Register>
+            <MB8_Register dt:dt="int">16907</MB8_Register>
+            <MB8_Register dt:dt="int">13107</MB8_Register>
+            <MB8_Register dt:dt="int">16910</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">18225</MB8_Register>
+            <MB8_Register dt:dt="int">48128</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">18029</MB8_Register>
+            <MB8_Register dt:dt="int">32768</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">18235</MB8_Register>
+            <MB8_Register dt:dt="int">32768</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">16243</MB8_Register>
+            <MB8_Register dt:dt="int">13107</MB8_Register>
+            <MB8_Register dt:dt="int">16968</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+          </MB8_RegisterList>
+        </MB8_Function>
+        <MB8_Function>
+          <FunctionCode dt:dt="int">3</FunctionCode>
+          <StartAddress dt:dt="hex">01F4</StartAddress>
+          <Quantity dt:dt="int">12</Quantity>
+          <MB8_RegisterList>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">12345</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">5678</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">100</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+          </MB8_RegisterList>
+        </MB8_Function>
+        <MB8_Function>
+          <FunctionCode dt:dt="int">3</FunctionCode>
+          <StartAddress dt:dt="hex">0514</StartAddress>
+          <Quantity dt:dt="int">60</Quantity>
+          <MB8_RegisterList>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">15589</MB8_Register>
+            <MB8_Register dt:dt="int">24642</MB8_Register>
+            <MB8_Register dt:dt="int">15619</MB8_Register>
+            <MB8_Register dt:dt="int">4719</MB8_Register>
+            <MB8_Register dt:dt="int">15564</MB8_Register>
+            <MB8_Register dt:dt="int">52429</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">15477</MB8_Register>
+            <MB8_Register dt:dt="int">49807</MB8_Register>
+            <MB8_Register dt:dt="int">15507</MB8_Register>
+            <MB8_Register dt:dt="int">29884</MB8_Register>
+            <MB8_Register dt:dt="int">15428</MB8_Register>
+            <MB8_Register dt:dt="int">39846</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">15267</MB8_Register>
+            <MB8_Register dt:dt="int">55050</MB8_Register>
+            <MB8_Register dt:dt="int">15605</MB8_Register>
+            <MB8_Register dt:dt="int">49807</MB8_Register>
+          </MB8_RegisterList>
+        </MB8_Function>
+      </MB8_FunctionList>
+    </MB8_Slave>
+    <MB8_Slave>
+      <SlaveId dt:dt="int">100</SlaveId>
+      <Name dt:dt="string">二号主水泵</Name>
+      <MB8_FunctionList>
+        <MB8_Function>
+          <FunctionCode dt:dt="int">3</FunctionCode>
+          <StartAddress dt:dt="hex">1581</StartAddress>
+          <Quantity dt:dt="int">58</Quantity>
+          <MB8_RegisterList>
+            <MB8_Register dt:dt="int">17245</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">17244</MB8_Register>
+            <MB8_Register dt:dt="int">32768</MB8_Register>
+            <MB8_Register dt:dt="int">17245</MB8_Register>
+            <MB8_Register dt:dt="int">13107</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">17343</MB8_Register>
+            <MB8_Register dt:dt="int">16384</MB8_Register>
+            <MB8_Register dt:dt="int">17342</MB8_Register>
+            <MB8_Register dt:dt="int">58982</MB8_Register>
+            <MB8_Register dt:dt="int">17343</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">16868</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">16863</MB8_Register>
+            <MB8_Register dt:dt="int">13107</MB8_Register>
+            <MB8_Register dt:dt="int">16870</MB8_Register>
+            <MB8_Register dt:dt="int">26214</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">18190</MB8_Register>
+            <MB8_Register dt:dt="int">37888</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">17981</MB8_Register>
+            <MB8_Register dt:dt="int">4096</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">18198</MB8_Register>
+            <MB8_Register dt:dt="int">25600</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">16238</MB8_Register>
+            <MB8_Register dt:dt="int">5243</MB8_Register>
+            <MB8_Register dt:dt="int">16967</MB8_Register>
+            <MB8_Register dt:dt="int">60293</MB8_Register>
+          </MB8_RegisterList>
+        </MB8_Function>
+        <MB8_Function>
+          <FunctionCode dt:dt="int">3</FunctionCode>
+          <StartAddress dt:dt="hex">01F4</StartAddress>
+          <Quantity dt:dt="int">12</Quantity>
+          <MB8_RegisterList>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">5678</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">2345</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+          </MB8_RegisterList>
+        </MB8_Function>
+        <MB8_Function>
+          <FunctionCode dt:dt="int">3</FunctionCode>
+          <StartAddress dt:dt="hex">0514</StartAddress>
+          <Quantity dt:dt="int">60</Quantity>
+          <MB8_RegisterList>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">15631</MB8_Register>
+            <MB8_Register dt:dt="int">23593</MB8_Register>
+            <MB8_Register dt:dt="int">15643</MB8_Register>
+            <MB8_Register dt:dt="int">42467</MB8_Register>
+            <MB8_Register dt:dt="int">15605</MB8_Register>
+            <MB8_Register dt:dt="int">49807</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">15428</MB8_Register>
+            <MB8_Register dt:dt="int">39846</MB8_Register>
+            <MB8_Register dt:dt="int">15477</MB8_Register>
+            <MB8_Register dt:dt="int">49807</MB8_Register>
+            <MB8_Register dt:dt="int">15395</MB8_Register>
+            <MB8_Register dt:dt="int">55050</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">15235</MB8_Register>
+            <MB8_Register dt:dt="int">4719</MB8_Register>
+            <MB8_Register dt:dt="int">15631</MB8_Register>
+            <MB8_Register dt:dt="int">23593</MB8_Register>
+          </MB8_RegisterList>
+        </MB8_Function>
+      </MB8_FunctionList>
+    </MB8_Slave>
+    <MB8_Slave>
+      <SlaveId dt:dt="int">101</SlaveId>
+      <Name dt:dt="string">照明回路</Name>
+      <MB8_FunctionList>
+        <MB8_Function>
+          <FunctionCode dt:dt="int">3</FunctionCode>
+          <StartAddress dt:dt="hex">1581</StartAddress>
+          <Quantity dt:dt="int">58</Quantity>
+          <MB8_RegisterList>
+            <MB8_Register dt:dt="int">17242</MB8_Register>
+            <MB8_Register dt:dt="int">32768</MB8_Register>
+            <MB8_Register dt:dt="int">17243</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">17242</MB8_Register>
+            <MB8_Register dt:dt="int">52429</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">17341</MB8_Register>
+            <MB8_Register dt:dt="int">16384</MB8_Register>
+            <MB8_Register dt:dt="int">17341</MB8_Register>
+            <MB8_Register dt:dt="int">39322</MB8_Register>
+            <MB8_Register dt:dt="int">17341</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">16708</MB8_Register>
+            <MB8_Register dt:dt="int">52429</MB8_Register>
+            <MB8_Register dt:dt="int">16705</MB8_Register>
+            <MB8_Register dt:dt="int">39322</MB8_Register>
+            <MB8_Register dt:dt="int">16712</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">17920</MB8_Register>
+            <MB8_Register dt:dt="int">8192</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">17729</MB8_Register>
+            <MB8_Register dt:dt="int">49152</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">17929</MB8_Register>
+            <MB8_Register dt:dt="int">32768</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">16232</MB8_Register>
+            <MB8_Register dt:dt="int">62915</MB8_Register>
+            <MB8_Register dt:dt="int">16968</MB8_Register>
+            <MB8_Register dt:dt="int">5243</MB8_Register>
+          </MB8_RegisterList>
+        </MB8_Function>
+        <MB8_Function>
+          <FunctionCode dt:dt="int">3</FunctionCode>
+          <StartAddress dt:dt="hex">01F4</StartAddress>
+          <Quantity dt:dt="int">12</Quantity>
+          <MB8_RegisterList>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">34567</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">12345</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+          </MB8_RegisterList>
+        </MB8_Function>
+        <MB8_Function>
+          <FunctionCode dt:dt="int">3</FunctionCode>
+          <StartAddress dt:dt="hex">0514</StartAddress>
+          <Quantity dt:dt="int">60</Quantity>
+          <MB8_RegisterList>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">15672</MB8_Register>
+            <MB8_Register dt:dt="int">20972</MB8_Register>
+            <MB8_Register dt:dt="int">15660</MB8_Register>
+            <MB8_Register dt:dt="int">2097</MB8_Register>
+            <MB8_Register dt:dt="int">15684</MB8_Register>
+            <MB8_Register dt:dt="int">39846</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">15523</MB8_Register>
+            <MB8_Register dt:dt="int">55050</MB8_Register>
+            <MB8_Register dt:dt="int">15540</MB8_Register>
+            <MB8_Register dt:dt="int">14680</MB8_Register>
+            <MB8_Register dt:dt="int">15507</MB8_Register>
+            <MB8_Register dt:dt="int">29884</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">15300</MB8_Register>
+            <MB8_Register dt:dt="int">39846</MB8_Register>
+            <MB8_Register dt:dt="int">15692</MB8_Register>
+            <MB8_Register dt:dt="int">52429</MB8_Register>
+          </MB8_RegisterList>
+        </MB8_Function>
+      </MB8_FunctionList>
+    </MB8_Slave>
+    <MB8_Slave>
+      <SlaveId dt:dt="int">102</SlaveId>
+      <Name dt:dt="string">空调机组</Name>
+      <MB8_FunctionList>
+        <MB8_Function>
+          <FunctionCode dt:dt="int">3</FunctionCode>
+          <StartAddress dt:dt="hex">1581</StartAddress>
+          <Quantity dt:dt="int">58</Quantity>
+          <MB8_RegisterList>
+            <MB8_Register dt:dt="int">17246</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">17245</MB8_Register>
+            <MB8_Register dt:dt="int">32768</MB8_Register>
+            <MB8_Register dt:dt="int">17246</MB8_Register>
+            <MB8_Register dt:dt="int">19661</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">17344</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">17343</MB8_Register>
+            <MB8_Register dt:dt="int">49152</MB8_Register>
+            <MB8_Register dt:dt="int">17344</MB8_Register>
+            <MB8_Register dt:dt="int">6554</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">16951</MB8_Register>
+            <MB8_Register dt:dt="int">13107</MB8_Register>
+            <MB8_Register dt:dt="int">16952</MB8_Register>
+            <MB8_Register dt:dt="int">52429</MB8_Register>
+            <MB8_Register dt:dt="int">16950</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">18251</MB8_Register>
+            <MB8_Register dt:dt="int">8192</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">18060</MB8_Register>
+            <MB8_Register dt:dt="int">40960</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">18262</MB8_Register>
+            <MB8_Register dt:dt="int">55296</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">16240</MB8_Register>
+            <MB8_Register dt:dt="int">41943</MB8_Register>
+            <MB8_Register dt:dt="int">16967</MB8_Register>
+            <MB8_Register dt:dt="int">52429</MB8_Register>
+          </MB8_RegisterList>
+        </MB8_Function>
+        <MB8_Function>
+          <FunctionCode dt:dt="int">3</FunctionCode>
+          <StartAddress dt:dt="hex">01F4</StartAddress>
+          <Quantity dt:dt="int">12</Quantity>
+          <MB8_RegisterList>
+            <MB8_Register dt:dt="int">1</MB8_Register>
+            <MB8_Register dt:dt="int">23476</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">34567</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+          </MB8_RegisterList>
+        </MB8_Function>
+        <MB8_Function>
+          <FunctionCode dt:dt="int">3</FunctionCode>
+          <StartAddress dt:dt="hex">0514</StartAddress>
+          <Quantity dt:dt="int">60</Quantity>
+          <MB8_RegisterList>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">15564</MB8_Register>
+            <MB8_Register dt:dt="int">52429</MB8_Register>
+            <MB8_Register dt:dt="int">15589</MB8_Register>
+            <MB8_Register dt:dt="int">24642</MB8_Register>
+            <MB8_Register dt:dt="int">15540</MB8_Register>
+            <MB8_Register dt:dt="int">14680</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">15395</MB8_Register>
+            <MB8_Register dt:dt="int">55050</MB8_Register>
+            <MB8_Register dt:dt="int">15428</MB8_Register>
+            <MB8_Register dt:dt="int">39846</MB8_Register>
+            <MB8_Register dt:dt="int">15379</MB8_Register>
+            <MB8_Register dt:dt="int">29884</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">0</MB8_Register>
+            <MB8_Register dt:dt="int">15172</MB8_Register>
+            <MB8_Register dt:dt="int">39846</MB8_Register>
+            <MB8_Register dt:dt="int">15589</MB8_Register>
+            <MB8_Register dt:dt="int">24642</MB8_Register>
+          </MB8_RegisterList>
+        </MB8_Function>
+      </MB8_FunctionList>
+    </MB8_Slave>
+  </MB8_SlaveList>
+</Document>

@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(mysql -uroot -p123 -D ma -e \"SHOW INDEX FROM site; SHOW INDEX FROM distribution_box; SHOW INDEX FROM meter; SHOW INDEX FROM meter_status;\")",
+      "PowerShell(dotnet --version)",
+      "PowerShell(dotnet msbuild \"e:\\\\c#code\\\\TPEM_ManagementSystem\\\\MeterAcquisitionPro.sln\" /t:Build /p:Configuration=Debug)",
+      "PowerShell(Get-Process -Id \\(Get-NetTCPConnection -State Listen -LocalPort 1883 -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess\\) -ErrorAction SilentlyContinue | Select-Object ProcessName,Id,Path; exit 0)",
+      "PowerShell(mysql -uroot -p123 -D ma -e \"SELECT meter_code, meter_name, slave_address, is_enabled, is_toolbar FROM meter WHERE meter_code IN \\('DASH-100','DASH-101','DASH-102'\\) ORDER BY meter_code; SELECT m.meter_code, ms.is_online, ms.status_code FROM meter_status ms JOIN meter m ON m.id = ms.meter_id WHERE m.meter_code IN \\('DASH-100','DASH-101','DASH-102'\\) ORDER BY m.meter_code;\")",
+      "PowerShell(mvn -f \"e:\\\\c#code\\\\TPEM_ManagementSystem\\\\RuoYi-Vue-master\\\\ruoyi-framework\\\\pom.xml\" compile -DskipTests)",
+      "Read(//c/Program Files/**)"
+    ]
+  }
+}

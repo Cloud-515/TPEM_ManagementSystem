@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(& \"C:\\\\Program Files\\\\dotnet\\\\dotnet.exe\" build \"e:\\\\c#code\\\\TPEM_ManagementSystem\\\\MeterAcquisitionPro.sln\" -c Debug -p:OutputPath=\"e:\\\\c#code\\\\TPEM_ManagementSystem\\\\MeterAcquisition\\\\bin\\\\Debug_Verify\\\\\")",
+      "Bash(mvn -f \"e:/c#code/TPEM_ManagementSystem/RuoYi-Vue-master/pom.xml\" -pl ruoyi-admin -am -DskipTests compile)",
+      "Bash(npm --prefix \"e:/c#code/TPEM_ManagementSystem/RuoYi-Vue-master/ruoyi-ui\" run build)"
+    ]
+  }
+}
