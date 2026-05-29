@@ -22,9 +22,26 @@ namespace MeterIngestionWorker
         private static readonly TimeSpan DuplicateWindow = TimeSpan.FromSeconds(10);
         private static readonly JsonSerializerSettings JsonSettings = new JsonSerializerSettings
         {
-            DateFormatString = "yyyy-MM-dd HH:mm:ss",
+            DateFormatString = "o",
+            DateParseHandling = DateParseHandling.DateTimeOffset,
             NullValueHandling = NullValueHandling.Ignore
         };
+        private static TimeSpan RealtimeHistoryInterval;
+        private static TimeSpan EnergyHistoryInterval;
+        private static TimeSpan QualityHistoryInterval;
+        private static TimeSpan OfflineTimeout;
+        private static float VoltageAbsoluteChangeThreshold;
+        private static float VoltageRelativeChangeThreshold;
+        private static float CurrentAbsoluteChangeThreshold;
+        private static float CurrentRelativeChangeThreshold;
+        private static float PowerAbsoluteChangeThreshold;
+        private static float PowerRelativeChangeThreshold;
+        private static float PowerFactorChangeThreshold;
+        private static float FrequencyChangeThreshold;
+        private static float AlarmVoltageLowThreshold;
+        private static float AlarmVoltageHighThreshold;
+        private static float AlarmCurrentHighThreshold;
+        private static float AlarmPowerFactorLowThreshold;
 
         private static string _mqttHost;
         private static int _mqttPort;
@@ -55,6 +72,7 @@ namespace MeterIngestionWorker
                 };
 
                 var workers = StartWorkers();
+                var offlineMonitor = Task.Run(() => MonitorOfflineMetersAsync(cts.Token), cts.Token);
                 try
                 {
                     await RunMqttSubscriberAsync(cts.Token).ConfigureAwait(false);
@@ -73,7 +91,7 @@ namespace MeterIngestionWorker
                     MessageQueue.CompleteAdding();
                 }
 
-                await Task.WhenAll(workers).ConfigureAwait(false);
+                await Task.WhenAll(workers.Concat(new[] { offlineMonitor })).ConfigureAwait(false);
                 return exitCode;
             }
         }
@@ -96,6 +114,23 @@ namespace MeterIngestionWorker
             {
                 _processWorkers = 1;
             }
+
+            RealtimeHistoryInterval = TimeSpan.FromSeconds(GetPositiveIntAppSetting("RealtimeHistoryIntervalSeconds", 30));
+            EnergyHistoryInterval = TimeSpan.FromMinutes(GetPositiveIntAppSetting("EnergyHistoryIntervalMinutes", 15));
+            QualityHistoryInterval = TimeSpan.FromMinutes(GetPositiveIntAppSetting("QualityHistoryIntervalMinutes", 10));
+            OfflineTimeout = TimeSpan.FromSeconds(GetPositiveIntAppSetting("OfflineTimeoutSeconds", 15));
+            VoltageAbsoluteChangeThreshold = GetPositiveFloatAppSetting("VoltageAbsoluteChangeThreshold", 3f);
+            VoltageRelativeChangeThreshold = GetPositiveFloatAppSetting("VoltageRelativeChangeThreshold", 0.015f);
+            CurrentAbsoluteChangeThreshold = GetPositiveFloatAppSetting("CurrentAbsoluteChangeThreshold", 0.5f);
+            CurrentRelativeChangeThreshold = GetPositiveFloatAppSetting("CurrentRelativeChangeThreshold", 0.05f);
+            PowerAbsoluteChangeThreshold = GetPositiveFloatAppSetting("PowerAbsoluteChangeThreshold", 1000f);
+            PowerRelativeChangeThreshold = GetPositiveFloatAppSetting("PowerRelativeChangeThreshold", 0.05f);
+            PowerFactorChangeThreshold = GetPositiveFloatAppSetting("PowerFactorChangeThreshold", 0.03f);
+            FrequencyChangeThreshold = GetPositiveFloatAppSetting("FrequencyChangeThreshold", 0.05f);
+            AlarmVoltageLowThreshold = GetPositiveFloatAppSetting("AlarmVoltageLowThreshold", 180f);
+            AlarmVoltageHighThreshold = GetPositiveFloatAppSetting("AlarmVoltageHighThreshold", 260f);
+            AlarmCurrentHighThreshold = GetPositiveFloatAppSetting("AlarmCurrentHighThreshold", 400f);
+            AlarmPowerFactorLowThreshold = GetPositiveFloatAppSetting("AlarmPowerFactorLowThreshold", 0.5f);
         }
 
         private static Task[] StartWorkers()
@@ -127,7 +162,7 @@ namespace MeterIngestionWorker
                         Topic = args.ApplicationMessage.Topic,
                         Qos = (byte)args.ApplicationMessage.QualityOfServiceLevel,
                         PayloadJson = payload,
-                        ReceivedAt = DateTime.Now
+                        ReceivedAt = GetBeijingNow().UtcDateTime
                     };
 
                     if (!MessageQueue.IsAddingCompleted)
@@ -220,7 +255,7 @@ namespace MeterIngestionWorker
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine("处理消息失败: " + ex.Message);
+                    Console.WriteLine("处理消息失败: " + ex);
                 }
             }
         }
@@ -244,7 +279,7 @@ namespace MeterIngestionWorker
 
         private static void HandleTelemetryEnvelope(MqttEnvelope envelope)
         {
-            var telemetry = JsonConvert.DeserializeObject<MeterTelemetryMessage>(envelope.PayloadJson);
+            var telemetry = JsonConvert.DeserializeObject<MeterTelemetryMessage>(envelope.PayloadJson, JsonSettings);
             if (telemetry == null)
             {
                 throw new InvalidOperationException("MQTT 消息为空或 JSON 反序列化失败。");
@@ -278,12 +313,35 @@ namespace MeterIngestionWorker
                     {
                         long meterId = GetMeterId(connection, transaction, telemetry.MeterCode, telemetry.SiteCode);
 
-                        UpsertRealtimeLatest(connection, transaction, meterId, telemetry);
-                        InsertRealtimeHistory(connection, transaction, meterId, telemetry);
-                        UpsertEnergyLatest(connection, transaction, meterId, telemetry);
-                        InsertEnergyHistory(connection, transaction, meterId, telemetry);
-                        UpsertPowerQualityLatest(connection, transaction, meterId, telemetry);
-                        InsertPowerQualityHistory(connection, transaction, meterId, telemetry);
+                        if (telemetry.RealTime != null)
+                        {
+                            UpsertRealtimeLatest(connection, transaction, meterId, telemetry);
+                            if (ShouldWriteRealtimeHistory(connection, transaction, meterId, telemetry))
+                            {
+                                InsertRealtimeHistory(connection, transaction, meterId, telemetry);
+                            }
+
+                            EvaluateRealtimeAlarms(connection, transaction, meterId, telemetry);
+                        }
+
+                        if (telemetry.Energy != null)
+                        {
+                            UpsertEnergyLatest(connection, transaction, meterId, telemetry);
+                            if (ShouldWriteEnergyHistory(connection, transaction, meterId, telemetry))
+                            {
+                                InsertEnergyHistory(connection, transaction, meterId, telemetry);
+                            }
+                        }
+
+                        if (telemetry.Quality != null)
+                        {
+                            UpsertPowerQualityLatest(connection, transaction, meterId, telemetry);
+                            if (ShouldWriteQualityHistory(connection, transaction, meterId, telemetry))
+                            {
+                                InsertPowerQualityHistory(connection, transaction, meterId, telemetry);
+                            }
+                        }
+
                         UpsertMeterStatus(connection, transaction, meterId, telemetry, null);
                         UpdateMeterLastSeen(connection, transaction, meterId, telemetry.CollectTime);
                         transaction.Commit();
@@ -305,7 +363,7 @@ namespace MeterIngestionWorker
 
         private static void HandleRegistryEnvelope(MqttEnvelope envelope)
         {
-            var registry = JsonConvert.DeserializeObject<MeterRegistryMessage>(envelope.PayloadJson);
+            var registry = JsonConvert.DeserializeObject<MeterRegistryMessage>(envelope.PayloadJson, JsonSettings);
             if (registry == null)
             {
                 throw new InvalidOperationException("档案同步消息为空或 JSON 反序列化失败。");
@@ -590,7 +648,7 @@ updated_at = CURRENT_TIMESTAMP;";
                 command.Parameters.AddWithValue("@location", (object)(item.Location ?? registry.BoxName ?? string.Empty));
                 command.Parameters.AddWithValue("@is_toolbar", item.IsToolbar);
                 command.Parameters.AddWithValue("@mqtt_topic", BuildMeterTopic(registry.SiteCode, registry.BoxCode, item.MeterCode));
-                command.Parameters.AddWithValue("@last_seen_time", registry.ScanTime);
+                command.Parameters.AddWithValue("@last_seen_time", ToUtcOffset(registry.ScanTime));
                 command.ExecuteNonQuery();
             }
 
@@ -614,12 +672,12 @@ WHERE id = @id;";
 
             using (var command = new NpgsqlCommand(sql, connection, transaction))
             {
-                command.Parameters.AddWithValue("@last_seen_time", registry.ScanTime);
+                command.Parameters.AddWithValue("@last_seen_time", ToUtcOffset(registry.ScanTime));
                 command.Parameters.AddWithValue("@id", meterId);
                 command.ExecuteNonQuery();
             }
 
-            UpsertMeterStatus(connection, transaction, meterId, registry.ScanTime, null, null, null, "disabled", false);
+            UpsertMeterStatus(connection, transaction, meterId, ToUtcOffset(registry.ScanTime), null, null, null, "disabled", false);
         }
 
         private static void MarkMissingMetersOffline(NpgsqlConnection connection, NpgsqlTransaction transaction, long siteId, long boxId, System.Collections.Generic.HashSet<long> activeMeterIds, DateTime scanTime)
@@ -659,6 +717,11 @@ WHERE site_id = @site_id
 
         private static void UpsertRealtimeLatest(NpgsqlConnection connection, NpgsqlTransaction transaction, long meterId, MeterTelemetryMessage telemetry)
         {
+            if (telemetry.RealTime == null)
+            {
+                return;
+            }
+
             const string sql = @"
 INSERT INTO meter_realtime_latest
 (meter_id, collect_time, voltage_a, voltage_b, voltage_c, voltage_ab, voltage_bc, voltage_ca,
@@ -820,17 +883,329 @@ ON CONFLICT (meter_id, collect_time) DO NOTHING;";
             }
         }
 
+        private static bool ShouldWriteRealtimeHistory(NpgsqlConnection connection, NpgsqlTransaction transaction, long meterId, MeterTelemetryMessage telemetry)
+        {
+            const string sql = @"
+SELECT collect_time, voltage_a, voltage_b, voltage_c, current_a, current_b, current_c,
+       active_power_total, power_factor_total, frequency
+FROM meter_realtime_history
+WHERE meter_id = @meter_id
+ORDER BY collect_time DESC
+LIMIT 1;";
+
+            using (var command = new NpgsqlCommand(sql, connection, transaction))
+            {
+                command.Parameters.AddWithValue("@meter_id", meterId);
+                using (var reader = command.ExecuteReader())
+                {
+                    if (!reader.Read())
+                    {
+                        return true;
+                    }
+
+                    var lastCollectTime = ReadDateTimeOffset(reader, 0);
+                    if (telemetry.CollectTime - lastCollectTime >= RealtimeHistoryInterval)
+                    {
+                        return true;
+                    }
+
+                    var lastRealtime = new RealTimeData
+                    {
+                        VoltageA = ReadFloat(reader, 1),
+                        VoltageB = ReadFloat(reader, 2),
+                        VoltageC = ReadFloat(reader, 3),
+                        CurrentA = ReadFloat(reader, 4),
+                        CurrentB = ReadFloat(reader, 5),
+                        CurrentC = ReadFloat(reader, 6),
+                        ActivePowerTotal = ReadFloat(reader, 7),
+                        PowerFactorTotal = ReadFloat(reader, 8),
+                        Frequency = ReadFloat(reader, 9)
+                    };
+
+                    return HasRealtimeSignificantChange(lastRealtime, telemetry.RealTime);
+                }
+            }
+        }
+
+        private static bool ShouldWriteEnergyHistory(NpgsqlConnection connection, NpgsqlTransaction transaction, long meterId, MeterTelemetryMessage telemetry)
+        {
+            const string sql = @"
+SELECT collect_time
+FROM meter_energy_history
+WHERE meter_id = @meter_id
+ORDER BY collect_time DESC
+LIMIT 1;";
+
+            using (var command = new NpgsqlCommand(sql, connection, transaction))
+            {
+                command.Parameters.AddWithValue("@meter_id", meterId);
+                var result = command.ExecuteScalar();
+                if (result == null || result == DBNull.Value)
+                {
+                    return true;
+                }
+
+                var lastCollectTime = ToDateTimeOffset(result);
+                return telemetry.CollectTime - lastCollectTime >= EnergyHistoryInterval;
+            }
+        }
+
+        private static bool ShouldWriteQualityHistory(NpgsqlConnection connection, NpgsqlTransaction transaction, long meterId, MeterTelemetryMessage telemetry)
+        {
+            const string sql = @"
+SELECT collect_time
+FROM meter_power_quality_history
+WHERE meter_id = @meter_id
+ORDER BY collect_time DESC
+LIMIT 1;";
+
+            using (var command = new NpgsqlCommand(sql, connection, transaction))
+            {
+                command.Parameters.AddWithValue("@meter_id", meterId);
+                var result = command.ExecuteScalar();
+                if (result == null || result == DBNull.Value)
+                {
+                    return true;
+                }
+
+                var lastCollectTime = ToDateTimeOffset(result);
+                return telemetry.CollectTime - lastCollectTime >= QualityHistoryInterval;
+            }
+        }
+
+        private static void EvaluateRealtimeAlarms(NpgsqlConnection connection, NpgsqlTransaction transaction, long meterId, MeterTelemetryMessage telemetry)
+        {
+            var realtime = telemetry.RealTime;
+            if (realtime == null)
+            {
+                return;
+            }
+
+            UpsertAlarmState(connection, transaction, meterId, "voltage_low", "电压过低", "warning",
+                realtime.VoltageA < AlarmVoltageLowThreshold || realtime.VoltageB < AlarmVoltageLowThreshold || realtime.VoltageC < AlarmVoltageLowThreshold,
+                Math.Min(realtime.VoltageA, Math.Min(realtime.VoltageB, realtime.VoltageC)), AlarmVoltageLowThreshold, telemetry.CollectTime);
+
+            UpsertAlarmState(connection, transaction, meterId, "voltage_high", "电压过高", "warning",
+                realtime.VoltageA > AlarmVoltageHighThreshold || realtime.VoltageB > AlarmVoltageHighThreshold || realtime.VoltageC > AlarmVoltageHighThreshold,
+                Math.Max(realtime.VoltageA, Math.Max(realtime.VoltageB, realtime.VoltageC)), AlarmVoltageHighThreshold, telemetry.CollectTime);
+
+            var maxCurrent = Math.Max(realtime.CurrentA, Math.Max(realtime.CurrentB, realtime.CurrentC));
+            UpsertAlarmState(connection, transaction, meterId, "current_high", "电流过高", "critical",
+                maxCurrent > AlarmCurrentHighThreshold,
+                maxCurrent, AlarmCurrentHighThreshold, telemetry.CollectTime);
+
+            UpsertAlarmState(connection, transaction, meterId, "power_factor_low", "功率因数过低", "warning",
+                realtime.PowerFactorTotal < AlarmPowerFactorLowThreshold,
+                realtime.PowerFactorTotal, AlarmPowerFactorLowThreshold, telemetry.CollectTime);
+        }
+
+        private static void UpsertAlarmState(NpgsqlConnection connection, NpgsqlTransaction transaction, long meterId, string alarmCode, string alarmName, string alarmLevel, bool isActive, float alarmValue, float thresholdValue, DateTimeOffset collectTime)
+        {
+            const string activeSql = @"
+SELECT id
+FROM alarm_event
+WHERE meter_id = @meter_id
+  AND alarm_code = @alarm_code
+  AND status = 'active'
+ORDER BY start_time DESC
+LIMIT 1;";
+
+            long activeId = 0;
+            using (var command = new NpgsqlCommand(activeSql, connection, transaction))
+            {
+                command.Parameters.AddWithValue("@meter_id", meterId);
+                command.Parameters.AddWithValue("@alarm_code", alarmCode);
+                var result = command.ExecuteScalar();
+                if (result != null && result != DBNull.Value)
+                {
+                    activeId = Convert.ToInt64(result, CultureInfo.InvariantCulture);
+                }
+            }
+
+            if (isActive)
+            {
+                if (activeId > 0)
+                {
+                    const string updateSql = @"
+UPDATE alarm_event
+SET alarm_value = @alarm_value,
+    threshold_value = @threshold_value,
+    updated_at = CURRENT_TIMESTAMP
+WHERE id = @id;";
+
+                    using (var command = new NpgsqlCommand(updateSql, connection, transaction))
+                    {
+                        command.Parameters.AddWithValue("@alarm_value", Convert.ToDecimal(alarmValue, CultureInfo.InvariantCulture));
+                        command.Parameters.AddWithValue("@threshold_value", Convert.ToDecimal(thresholdValue, CultureInfo.InvariantCulture));
+                        command.Parameters.AddWithValue("@id", activeId);
+                        command.ExecuteNonQuery();
+                    }
+                }
+                else
+                {
+                    const string insertSql = @"
+INSERT INTO alarm_event
+(meter_id, alarm_code, alarm_name, alarm_level, alarm_value, threshold_value, status, start_time)
+VALUES
+(@meter_id, @alarm_code, @alarm_name, @alarm_level, @alarm_value, @threshold_value, 'active', @start_time);";
+
+                    using (var command = new NpgsqlCommand(insertSql, connection, transaction))
+                    {
+                        command.Parameters.AddWithValue("@meter_id", meterId);
+                        command.Parameters.AddWithValue("@alarm_code", alarmCode);
+                        command.Parameters.AddWithValue("@alarm_name", alarmName);
+                        command.Parameters.AddWithValue("@alarm_level", alarmLevel);
+                        command.Parameters.AddWithValue("@alarm_value", Convert.ToDecimal(alarmValue, CultureInfo.InvariantCulture));
+                        command.Parameters.AddWithValue("@threshold_value", Convert.ToDecimal(thresholdValue, CultureInfo.InvariantCulture));
+                        command.Parameters.AddWithValue("@start_time", collectTime.ToUniversalTime());
+                        command.ExecuteNonQuery();
+                    }
+                }
+
+                return;
+            }
+
+            if (activeId > 0)
+            {
+                const string clearSql = @"
+UPDATE alarm_event
+SET status = 'cleared',
+    end_time = @end_time,
+    duration_seconds = GREATEST(0, CAST(EXTRACT(EPOCH FROM (@end_time - start_time)) AS bigint)),
+    updated_at = CURRENT_TIMESTAMP
+WHERE id = @id;";
+
+                using (var command = new NpgsqlCommand(clearSql, connection, transaction))
+                {
+                    command.Parameters.AddWithValue("@end_time", collectTime.ToUniversalTime());
+                    command.Parameters.AddWithValue("@id", activeId);
+                    command.ExecuteNonQuery();
+                }
+            }
+        }
+
+        private static bool HasRealtimeSignificantChange(RealTimeData previous, RealTimeData current)
+        {
+            if (previous == null || current == null)
+            {
+                return true;
+            }
+
+            return HasAbsoluteOrRelativeChange(previous.VoltageA, current.VoltageA, VoltageAbsoluteChangeThreshold, VoltageRelativeChangeThreshold)
+                || HasAbsoluteOrRelativeChange(previous.VoltageB, current.VoltageB, VoltageAbsoluteChangeThreshold, VoltageRelativeChangeThreshold)
+                || HasAbsoluteOrRelativeChange(previous.VoltageC, current.VoltageC, VoltageAbsoluteChangeThreshold, VoltageRelativeChangeThreshold)
+                || HasAbsoluteOrRelativeChange(previous.CurrentA, current.CurrentA, CurrentAbsoluteChangeThreshold, CurrentRelativeChangeThreshold)
+                || HasAbsoluteOrRelativeChange(previous.CurrentB, current.CurrentB, CurrentAbsoluteChangeThreshold, CurrentRelativeChangeThreshold)
+                || HasAbsoluteOrRelativeChange(previous.CurrentC, current.CurrentC, CurrentAbsoluteChangeThreshold, CurrentRelativeChangeThreshold)
+                || HasAbsoluteOrRelativeChange(previous.ActivePowerTotal, current.ActivePowerTotal, PowerAbsoluteChangeThreshold, PowerRelativeChangeThreshold)
+                || Math.Abs(previous.PowerFactorTotal - current.PowerFactorTotal) >= PowerFactorChangeThreshold
+                || Math.Abs(previous.Frequency - current.Frequency) >= FrequencyChangeThreshold;
+        }
+
+        private static bool HasAbsoluteOrRelativeChange(float previous, float current, float absoluteThreshold, float relativeThreshold)
+        {
+            var absoluteDelta = Math.Abs(current - previous);
+            if (absoluteDelta >= absoluteThreshold)
+            {
+                return true;
+            }
+
+            var baseline = Math.Max(Math.Abs(previous), 0.0001f);
+            return absoluteDelta / baseline >= relativeThreshold;
+        }
+
+        private static float ReadFloat(NpgsqlDataReader reader, int ordinal)
+        {
+            return reader.IsDBNull(ordinal) ? 0f : Convert.ToSingle(reader.GetValue(ordinal), CultureInfo.InvariantCulture);
+        }
+
+        private static DateTimeOffset ReadDateTimeOffset(NpgsqlDataReader reader, int ordinal)
+        {
+            return ToDateTimeOffset(reader.GetValue(ordinal));
+        }
+
+        private static DateTimeOffset ToDateTimeOffset(object value)
+        {
+            if (value == null || value == DBNull.Value)
+            {
+                throw new InvalidOperationException("数据库时间字段为空，无法转换。");
+            }
+
+            if (value is DateTimeOffset dateTimeOffset)
+            {
+                return dateTimeOffset;
+            }
+
+            if (value is DateTime dateTime)
+            {
+                if (dateTime.Kind == DateTimeKind.Unspecified)
+                {
+                    return new DateTimeOffset(DateTime.SpecifyKind(dateTime, DateTimeKind.Utc));
+                }
+
+                return new DateTimeOffset(dateTime.ToUniversalTime(), TimeSpan.Zero);
+            }
+
+            if (value is string text && !string.IsNullOrWhiteSpace(text))
+            {
+                if (DateTimeOffset.TryParse(text, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var parsed))
+                {
+                    return parsed;
+                }
+            }
+
+            throw new InvalidCastException("无法将数据库值转换为 DateTimeOffset，实际类型: " + value.GetType().FullName);
+        }
+
+        private static async Task MonitorOfflineMetersAsync(CancellationToken cancellationToken)
+        {
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                try
+                {
+                    using (var connection = new NpgsqlConnection(_mysqlConnectionString))
+                    {
+                        await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+                        const string sql = @"
+UPDATE meter_status
+SET is_online = FALSE,
+    status_code = 'offline',
+    updated_at = CURRENT_TIMESTAMP
+WHERE is_online = TRUE
+  AND last_collect_time IS NOT NULL
+  AND last_collect_time < @deadline;";
+
+                        using (var command = new NpgsqlCommand(sql, connection))
+                        {
+                            command.Parameters.AddWithValue("@deadline", GetBeijingNow().UtcDateTime - OfflineTimeout);
+                            await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+                        }
+                    }
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine("离线监控失败: " + ex.Message);
+                }
+
+                await Task.Delay(TimeSpan.FromSeconds(5), cancellationToken).ConfigureAwait(false);
+            }
+        }
+
         private static void UpsertMeterStatus(NpgsqlConnection connection, NpgsqlTransaction transaction, long meterId, MeterTelemetryMessage telemetry, string errorMessage)
         {
             bool hasError = !string.IsNullOrWhiteSpace(errorMessage);
-            DateTime? collectTime = telemetry?.CollectTime;
+            DateTimeOffset? collectTime = telemetry?.CollectTime;
             UpsertMeterStatus(
                 connection,
                 transaction,
                 meterId,
                 collectTime,
-                hasError ? (DateTime?)null : DateTime.Now,
-                hasError ? (DateTime?)DateTime.Now : null,
+                hasError ? (DateTimeOffset?)null : new DateTimeOffset(GetBeijingNow().UtcDateTime),
+                hasError ? (DateTimeOffset?)new DateTimeOffset(GetBeijingNow().UtcDateTime) : null,
                 hasError ? errorMessage : null,
                 hasError ? "comm_error" : "online",
                 !hasError);
@@ -840,9 +1215,9 @@ ON CONFLICT (meter_id, collect_time) DO NOTHING;";
             NpgsqlConnection connection,
             NpgsqlTransaction transaction,
             long meterId,
-            DateTime? lastCollectTime,
-            DateTime? lastPublishTime,
-            DateTime? lastErrorTime,
+            DateTimeOffset? lastCollectTime,
+            DateTimeOffset? lastPublishTime,
+            DateTimeOffset? lastErrorTime,
             string lastErrorMessage,
             string statusCode,
             bool isOnline)
@@ -854,27 +1229,33 @@ VALUES
 (@meter_id, @is_online, @last_collect_time, @last_publish_time, @last_error_time, @last_error_message, @status_code)
 ON CONFLICT (meter_id) DO UPDATE SET
 is_online = EXCLUDED.is_online,
-last_collect_time = EXCLUDED.last_collect_time,
-last_publish_time = EXCLUDED.last_publish_time,
-last_error_time = EXCLUDED.last_error_time,
+last_collect_time = COALESCE(EXCLUDED.last_collect_time, meter_status.last_collect_time),
+last_publish_time = COALESCE(EXCLUDED.last_publish_time, meter_status.last_publish_time),
+last_error_time = COALESCE(EXCLUDED.last_error_time, meter_status.last_error_time),
 last_error_message = EXCLUDED.last_error_message,
 status_code = EXCLUDED.status_code,
-updated_at = CURRENT_TIMESTAMP;";
+updated_at = CASE
+    WHEN meter_status.is_online IS DISTINCT FROM EXCLUDED.is_online
+      OR meter_status.status_code IS DISTINCT FROM EXCLUDED.status_code
+      OR meter_status.last_error_message IS DISTINCT FROM EXCLUDED.last_error_message
+    THEN CURRENT_TIMESTAMP
+    ELSE meter_status.updated_at
+END;";
 
             using (var command = new NpgsqlCommand(sql, connection, transaction))
             {
                 command.Parameters.AddWithValue("@meter_id", meterId);
                 command.Parameters.AddWithValue("@is_online", isOnline);
-                command.Parameters.AddWithValue("@last_collect_time", (object)lastCollectTime ?? DBNull.Value);
-                command.Parameters.AddWithValue("@last_publish_time", (object)lastPublishTime ?? DBNull.Value);
-                command.Parameters.AddWithValue("@last_error_time", (object)lastErrorTime ?? DBNull.Value);
+                command.Parameters.AddWithValue("@last_collect_time", lastCollectTime.HasValue ? (object)lastCollectTime.Value.ToUniversalTime() : DBNull.Value);
+                command.Parameters.AddWithValue("@last_publish_time", lastPublishTime.HasValue ? (object)lastPublishTime.Value.ToUniversalTime() : DBNull.Value);
+                command.Parameters.AddWithValue("@last_error_time", lastErrorTime.HasValue ? (object)lastErrorTime.Value.ToUniversalTime() : DBNull.Value);
                 command.Parameters.AddWithValue("@last_error_message", string.IsNullOrWhiteSpace(lastErrorMessage) ? (object)DBNull.Value : Truncate(lastErrorMessage, 255));
                 command.Parameters.AddWithValue("@status_code", statusCode ?? "offline");
                 command.ExecuteNonQuery();
             }
         }
 
-        private static void UpdateMeterLastSeen(NpgsqlConnection connection, NpgsqlTransaction transaction, long meterId, DateTime collectTime)
+        private static void UpdateMeterLastSeen(NpgsqlConnection connection, NpgsqlTransaction transaction, long meterId, DateTimeOffset collectTime)
         {
             const string sql = @"
 UPDATE meter
@@ -884,7 +1265,7 @@ WHERE id = @id;";
 
             using (var command = new NpgsqlCommand(sql, connection, transaction))
             {
-                command.Parameters.AddWithValue("@last_seen_time", collectTime);
+                command.Parameters.AddWithValue("@last_seen_time", collectTime.ToUniversalTime());
                 command.Parameters.AddWithValue("@id", meterId);
                 command.ExecuteNonQuery();
             }
@@ -893,7 +1274,7 @@ WHERE id = @id;";
         private static void FillRealtimeParameters(NpgsqlCommand command, long meterId, MeterTelemetryMessage telemetry)
         {
             command.Parameters.AddWithValue("@meter_id", meterId);
-            command.Parameters.AddWithValue("@collect_time", telemetry.CollectTime);
+            command.Parameters.AddWithValue("@collect_time", telemetry.CollectTime.ToUniversalTime());
             command.Parameters.AddWithValue("@voltage_a", (object)telemetry.RealTime?.VoltageA ?? DBNull.Value);
             command.Parameters.AddWithValue("@voltage_b", (object)telemetry.RealTime?.VoltageB ?? DBNull.Value);
             command.Parameters.AddWithValue("@voltage_c", (object)telemetry.RealTime?.VoltageC ?? DBNull.Value);
@@ -913,7 +1294,7 @@ WHERE id = @id;";
         private static void FillEnergyParameters(NpgsqlCommand command, long meterId, MeterTelemetryMessage telemetry)
         {
             command.Parameters.AddWithValue("@meter_id", meterId);
-            command.Parameters.AddWithValue("@collect_time", telemetry.CollectTime);
+            command.Parameters.AddWithValue("@collect_time", telemetry.CollectTime.ToUniversalTime());
             command.Parameters.AddWithValue("@forward_active_energy", telemetry.Energy.ForwardActiveEnergy);
             command.Parameters.AddWithValue("@reverse_active_energy", telemetry.Energy.ReverseActiveEnergy);
             command.Parameters.AddWithValue("@forward_reactive_energy", telemetry.Energy.ForwardReactiveEnergy);
@@ -923,7 +1304,7 @@ WHERE id = @id;";
         private static void FillQualityParameters(NpgsqlCommand command, long meterId, MeterTelemetryMessage telemetry)
         {
             command.Parameters.AddWithValue("@meter_id", meterId);
-            command.Parameters.AddWithValue("@collect_time", telemetry.CollectTime);
+            command.Parameters.AddWithValue("@collect_time", telemetry.CollectTime.ToUniversalTime());
             command.Parameters.AddWithValue("@current_thd_a", telemetry.Quality.CurrentTHDA);
             command.Parameters.AddWithValue("@current_thd_b", telemetry.Quality.CurrentTHDB);
             command.Parameters.AddWithValue("@current_thd_c", telemetry.Quality.CurrentTHDC);
@@ -1043,6 +1424,18 @@ WHERE id = @id;";
             return string.IsNullOrWhiteSpace(value) ? defaultValue : value;
         }
 
+        private static int GetPositiveIntAppSetting(string key, int defaultValue)
+        {
+            var value = ConfigurationManager.AppSettings[key];
+            return int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed) && parsed > 0 ? parsed : defaultValue;
+        }
+
+        private static float GetPositiveFloatAppSetting(string key, float defaultValue)
+        {
+            var value = ConfigurationManager.AppSettings[key];
+            return float.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed) && parsed > 0f ? parsed : defaultValue;
+        }
+
         private static string GetFirstAvailableConnectionString(params string[] names)
         {
             foreach (var name in names)
@@ -1057,16 +1450,26 @@ WHERE id = @id;";
             throw new ConfigurationErrorsException("缺少 connectionStrings: " + string.Join(", ", names));
         }
 
-        private static long ToUnixMinute(DateTime time)
+        private static long ToUnixMinute(DateTimeOffset time)
         {
-            return new DateTimeOffset(time).ToUnixTimeSeconds() / 60;
+            return time.ToUnixTimeSeconds() / 60;
+        }
+
+        private static DateTimeOffset GetBeijingNow()
+        {
+            return DateTimeOffset.UtcNow.ToOffset(TimeSpan.FromHours(8));
+        }
+
+        private static DateTimeOffset ToUtcOffset(DateTime value)
+        {
+            return new DateTimeOffset(value.Year, value.Month, value.Day, value.Hour, value.Minute, value.Second, TimeSpan.FromHours(8)).ToUniversalTime();
         }
 
         private static string TryExtractMeterCode(string payloadJson)
         {
             try
             {
-                var telemetry = JsonConvert.DeserializeObject<MeterTelemetryMessage>(payloadJson);
+                var telemetry = JsonConvert.DeserializeObject<MeterTelemetryMessage>(payloadJson, JsonSettings);
                 return telemetry?.MeterCode;
             }
             catch
@@ -1079,7 +1482,7 @@ WHERE id = @id;";
         {
             try
             {
-                var telemetry = JsonConvert.DeserializeObject<MeterTelemetryMessage>(payloadJson);
+                var telemetry = JsonConvert.DeserializeObject<MeterTelemetryMessage>(payloadJson, JsonSettings);
                 if (telemetry == null || string.IsNullOrWhiteSpace(telemetry.MeterCode))
                 {
                     return null;
@@ -1096,7 +1499,7 @@ WHERE id = @id;";
         private static bool IsDuplicateEnvelope(MqttEnvelope envelope)
         {
             var key = ComputeEnvelopeFingerprint(envelope);
-            var now = DateTime.UtcNow;
+            var now = GetBeijingNow().UtcDateTime;
             CleanupRecentMessages(now);
 
             while (true)

@@ -26,5 +26,35 @@ namespace MeterAcquisition.Properties
                 return defaultInstance;
             }
         }
+
+        [global::System.Configuration.UserScopedSettingAttribute()]
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
+        [global::System.Configuration.DefaultSettingValueAttribute("1")]
+        public decimal DashboardScanStart
+        {
+            get
+            {
+                return ((decimal)(this["DashboardScanStart"]));
+            }
+            set
+            {
+                this["DashboardScanStart"] = value;
+            }
+        }
+
+        [global::System.Configuration.UserScopedSettingAttribute()]
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
+        [global::System.Configuration.DefaultSettingValueAttribute("10")]
+        public decimal DashboardScanEnd
+        {
+            get
+            {
+                return ((decimal)(this["DashboardScanEnd"]));
+            }
+            set
+            {
+                this["DashboardScanEnd"] = value;
+            }
+        }
     }
 }

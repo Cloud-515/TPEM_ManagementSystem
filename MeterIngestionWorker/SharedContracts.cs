@@ -51,7 +51,8 @@ namespace MeterIngestionWorker
         public byte SlaveAddress { get; set; }
         public bool IsToolbar { get; set; }
         public string Source { get; set; }
-        public DateTime CollectTime { get; set; }
+        public DateTimeOffset CollectTime { get; set; }
+        public string SampleType { get; set; }
         public RealTimeData RealTime { get; set; }
         public EnergyData Energy { get; set; }
         public PowerQualityData Quality { get; set; }
