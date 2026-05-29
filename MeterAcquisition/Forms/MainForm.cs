@@ -58,6 +58,8 @@ namespace MeterAcquisition
         private bool _quickBaseStatusIsError;
         private bool _compareBaseStatusIsError;
         private bool _suppressScanRangePersistence;
+        private bool _mqttPublishErrorActive;
+        private bool _mqttPublishErrorShown;
         private FlowLayoutPanel _flpBoxContainer;
 
         public MainForm()
@@ -1534,12 +1536,12 @@ namespace MeterAcquisition
                 try
                 {
                     await _mqttPublisherService.PublishAsync(message);
+                    ClearMqttPublishError();
                 }
                 catch (Exception ex)
                 {
-                    lblStatus.Text = "MQTT 发布失败: " + ex.Message;
-                    lblStatus.ForeColor = Color.OrangeRed;
-                    throw;
+                    ShowMqttPublishError(ex);
+                    return;
                 }
             }
         }
@@ -1562,6 +1564,47 @@ namespace MeterAcquisition
                 Energy = includeEnergy ? result.Energy : null,
                 Quality = includeQuality ? result.Quality : null
             };
+        }
+
+        private void ShowMqttPublishError(Exception ex)
+        {
+            _mqttPublishErrorActive = true;
+            lblStatus.Text = "MQTT 发布失败: " + ex.Message;
+            lblStatus.ForeColor = Color.OrangeRed;
+
+            if (_mqttPublishErrorShown)
+            {
+                return;
+            }
+
+            _mqttPublishErrorShown = true;
+            MessageBox.Show(
+                "MQTT 发布失败，程序将继续运行并在下次发布时自动重连。\n\n" + ex.Message,
+                "MQTT 连接异常",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Warning);
+        }
+
+        private void ClearMqttPublishError()
+        {
+            if (!_mqttPublishErrorActive)
+            {
+                return;
+            }
+
+            _mqttPublishErrorActive = false;
+            _mqttPublishErrorShown = false;
+
+            if (_modbusService.IsConnected)
+            {
+                var portName = cmbPort.SelectedItem?.ToString() ?? cmbPort.Text;
+                lblStatus.Text = "已连接 " + portName + " (地址: " + txtAddr.Text + ")";
+                lblStatus.ForeColor = Color.Green;
+                return;
+            }
+
+            lblStatus.Text = "未连接";
+            lblStatus.ForeColor = Color.Red;
         }
 
         private static int GetPositiveIntAppSetting(string key, int defaultValue)
@@ -1904,8 +1947,11 @@ namespace MeterAcquisition
                     ResizeDashboardPanels();
                 }
                 _refreshTimer.Start();
-                lblStatus.Text = "已连接 " + portName + " (地址: " + txtAddr.Text + ")";
-                lblStatus.ForeColor = Color.Green;
+                if (!_mqttPublishErrorActive)
+                {
+                    lblStatus.Text = "已连接 " + portName + " (地址: " + txtAddr.Text + ")";
+                    lblStatus.ForeColor = Color.Green;
+                }
             }
             else
             {
@@ -1922,6 +1968,8 @@ namespace MeterAcquisition
                 catch
                 {
                 }
+                _mqttPublishErrorActive = false;
+                _mqttPublishErrorShown = false;
                 lblStatus.Text = message;
                 lblStatus.ForeColor = Color.Red;
             }
