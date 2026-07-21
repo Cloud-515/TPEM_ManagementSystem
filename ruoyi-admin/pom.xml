@@ -36,6 +36,13 @@
             <artifactId>mysql-connector-j</artifactId>
         </dependency>
 
+        <!-- PostgreSQL热泵监控数据源 -->
+        <dependency>
+            <groupId>org.postgresql</groupId>
+            <artifactId>postgresql</artifactId>
+            <version>42.7.4</version>
+        </dependency>
+
         <!-- 核心模块-->
         <dependency>
             <groupId>com.ruoyi</groupId>
