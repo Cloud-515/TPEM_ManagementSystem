@@ -3,6 +3,8 @@ package com.ruoyi.system.service;
 import java.util.List;
 import java.util.Map;
 import com.ruoyi.system.domain.MeterCard;
+import com.ruoyi.system.domain.MeterEnergyTrendPoint;
+import com.ruoyi.system.domain.MeterHistoryTrend;
 
 public interface IMeterCardService
 {
@@ -21,4 +23,8 @@ public interface IMeterCardService
     public List<MeterCard> listQualityHistory(MeterCard query);
 
     public MeterCard getRealtimeDetail(Long meterId);
+
+    public List<MeterEnergyTrendPoint> getEnergyTrend(String range);
+
+    public MeterHistoryTrend getHistoryTrend(String category, MeterCard query);
 }
