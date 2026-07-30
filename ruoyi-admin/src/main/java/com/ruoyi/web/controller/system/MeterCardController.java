@@ -4,6 +4,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import com.ruoyi.common.core.controller.BaseController;
 import com.ruoyi.common.core.domain.AjaxResult;
@@ -22,6 +23,12 @@ public class MeterCardController extends BaseController
     public AjaxResult getCards()
     {
         return AjaxResult.success(meterCardService.getMeterCardGroups());
+    }
+
+    @GetMapping("/dashboard/energy-trend")
+    public AjaxResult energyTrend(@RequestParam(defaultValue = "24h") String range)
+    {
+        return success(meterCardService.getEnergyTrend(range));
     }
 
     @GetMapping("/realtime/page")
@@ -43,6 +50,12 @@ public class MeterCardController extends BaseController
     {
         startPage();
         return getDataTable(meterCardService.listQualityMeters(query));
+    }
+
+    @GetMapping("/history/{category}/trend")
+    public AjaxResult historyTrend(@PathVariable String category, MeterCard query)
+    {
+        return success(meterCardService.getHistoryTrend(category, query));
     }
 
     @GetMapping("/history/realtime/page")

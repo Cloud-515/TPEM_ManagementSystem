@@ -28,6 +28,7 @@ public class MeterCard
     private Float currentC;
     private Float activePowerTotal;
     private Float reactivePowerTotal;
+    private Float reactivePowerKvar;
     private Float apparentPowerTotal;
     private Float powerFactorTotal;
     private Float frequency;
@@ -256,6 +257,16 @@ public class MeterCard
     public void setReactivePowerTotal(Float reactivePowerTotal)
     {
         this.reactivePowerTotal = reactivePowerTotal;
+    }
+
+    public Float getReactivePowerKvar()
+    {
+        return reactivePowerKvar;
+    }
+
+    public void setReactivePowerKvar(Float reactivePowerKvar)
+    {
+        this.reactivePowerKvar = reactivePowerKvar;
     }
 
     public Float getApparentPowerTotal()

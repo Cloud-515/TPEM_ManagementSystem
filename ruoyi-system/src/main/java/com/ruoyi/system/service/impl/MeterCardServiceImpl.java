@@ -2,30 +2,38 @@ package com.ruoyi.system.service.impl;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Calendar;
 import java.util.Date;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.stereotype.Service;
 import com.ruoyi.common.annotation.DataSource;
 import com.ruoyi.common.enums.DataSourceType;
+import com.ruoyi.system.domain.MeterEnergyReading;
+import com.ruoyi.system.domain.MeterHistoryTrend;
+import com.ruoyi.system.domain.MeterEnergyTrendPoint;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
 import com.ruoyi.system.domain.MeterCard;
 import com.ruoyi.system.mapper.MeterCardMapper;
 import com.ruoyi.system.service.IMeterCardService;
 
 @Service
+@DataSource(DataSourceType.SLAVE)
 public class MeterCardServiceImpl implements IMeterCardService
 {
     private static final long NO_DATA_TIMEOUT_MILLIS = 5 * 60 * 1000L;
     private static final long FUTURE_TIME_TOLERANCE_MILLIS = 60 * 1000L;
+    private static final String RANGE_7D = "7d";
+    private static final String RANGE_30D = "30d";
 
     @Autowired
     private MeterCardMapper meterCardMapper;
 
     @Override
-    @DataSource(DataSourceType.SLAVE)
     public Map<String, Object> getMeterCardGroups()
     {
         List<MeterCard> cards = meterCardMapper.selectMeterCards();
@@ -55,7 +63,6 @@ public class MeterCardServiceImpl implements IMeterCardService
     }
 
     @Override
-    @DataSource(DataSourceType.SLAVE)
     public List<MeterCard> listRealtimeMeters(MeterCard query)
     {
         List<MeterCard> list = meterCardMapper.selectRealtimeMeters(query);
@@ -64,7 +71,6 @@ public class MeterCardServiceImpl implements IMeterCardService
     }
 
     @Override
-    @DataSource(DataSourceType.SLAVE)
     public List<MeterCard> listEnergyMeters(MeterCard query)
     {
         List<MeterCard> list = meterCardMapper.selectEnergyMeters(query);
@@ -73,7 +79,6 @@ public class MeterCardServiceImpl implements IMeterCardService
     }
 
     @Override
-    @DataSource(DataSourceType.SLAVE)
     public List<MeterCard> listQualityMeters(MeterCard query)
     {
         List<MeterCard> list = meterCardMapper.selectQualityMeters(query);
@@ -82,7 +87,6 @@ public class MeterCardServiceImpl implements IMeterCardService
     }
 
     @Override
-    @DataSource(DataSourceType.SLAVE)
     public List<MeterCard> listRealtimeHistory(MeterCard query)
     {
         List<MeterCard> list = meterCardMapper.selectRealtimeHistory(query);
@@ -91,7 +95,6 @@ public class MeterCardServiceImpl implements IMeterCardService
     }
 
     @Override
-    @DataSource(DataSourceType.SLAVE)
     public List<MeterCard> listEnergyHistory(MeterCard query)
     {
         List<MeterCard> list = meterCardMapper.selectEnergyHistory(query);
@@ -100,7 +103,6 @@ public class MeterCardServiceImpl implements IMeterCardService
     }
 
     @Override
-    @DataSource(DataSourceType.SLAVE)
     public List<MeterCard> listQualityHistory(MeterCard query)
     {
         List<MeterCard> list = meterCardMapper.selectQualityHistory(query);
@@ -109,7 +111,6 @@ public class MeterCardServiceImpl implements IMeterCardService
     }
 
     @Override
-    @DataSource(DataSourceType.SLAVE)
     public MeterCard getRealtimeDetail(Long meterId)
     {
         MeterCard card = meterCardMapper.selectRealtimeDetail(meterId);
@@ -118,6 +119,177 @@ public class MeterCardServiceImpl implements IMeterCardService
             enrichCard(card);
         }
         return card;
+    }
+
+    @Override
+    public MeterHistoryTrend getHistoryTrend(String category, MeterCard query)
+    {
+        validateHistoryTrendQuery(query);
+        List<MeterCard> points;
+        if ("energy".equals(category))
+        {
+            points = meterCardMapper.selectEnergyHistoryTrend(query);
+        }
+        else
+        {
+            category = "realtime";
+            points = meterCardMapper.selectRealtimeHistoryTrend(query);
+        }
+        MeterHistoryTrend trend = new MeterHistoryTrend();
+        trend.setCategory(category);
+        trend.setPoints(points);
+        return trend;
+    }
+
+    private void validateHistoryTrendQuery(MeterCard query)
+    {
+        if (query == null || query.getMeterId() == null || query.getBeginTime() == null || query.getEndTime() == null)
+        {
+            throw new IllegalArgumentException("设备和时间范围不能为空");
+        }
+        if (query.getBeginTime().after(query.getEndTime()))
+        {
+            throw new IllegalArgumentException("开始时间不能晚于结束时间");
+        }
+        if (query.getEndTime().after(new Date(System.currentTimeMillis() + FUTURE_TIME_TOLERANCE_MILLIS)))
+        {
+            throw new IllegalArgumentException("结束时间不能晚于当前时间");
+        }
+    }
+
+    @Override
+    public List<MeterEnergyTrendPoint> getEnergyTrend(String range)
+    {
+        TrendRange trendRange = resolveTrendRange(range);
+        List<MeterEnergyTrendPoint> points = createTrendPoints(trendRange);
+        List<MeterEnergyReading> readings = meterCardMapper.selectEnergyReadings(trendRange.beginTime, trendRange.endTime);
+        Map<Long, Map<Integer, MeterEnergyReading>> firstReadings = new LinkedHashMap<>();
+        Map<Long, Map<Integer, MeterEnergyReading>> lastReadings = new LinkedHashMap<>();
+
+        for (MeterEnergyReading reading : readings)
+        {
+            if (reading == null)
+            {
+                continue;
+            }
+            Integer bucketIndex = getBucketIndex(reading.getCollectTime(), trendRange);
+            if (bucketIndex == null)
+            {
+                continue;
+            }
+            firstReadings.computeIfAbsent(reading.getMeterId(), key -> new LinkedHashMap<>()).putIfAbsent(bucketIndex, reading);
+            lastReadings.computeIfAbsent(reading.getMeterId(), key -> new LinkedHashMap<>()).put(bucketIndex, reading);
+        }
+
+        for (Map.Entry<Long, Map<Integer, MeterEnergyReading>> meterEntry : firstReadings.entrySet())
+        {
+            Map<Integer, MeterEnergyReading> firstByBucket = meterEntry.getValue();
+            Map<Integer, MeterEnergyReading> lastByBucket = lastReadings.get(meterEntry.getKey());
+            for (Map.Entry<Integer, MeterEnergyReading> bucketEntry : firstByBucket.entrySet())
+            {
+                MeterEnergyReading first = bucketEntry.getValue();
+                MeterEnergyReading last = lastByBucket.get(bucketEntry.getKey());
+                if (first == last || first.getForwardActiveEnergy() == null || last.getForwardActiveEnergy() == null)
+                {
+                    continue;
+                }
+                BigDecimal consumption = last.getForwardActiveEnergy().subtract(first.getForwardActiveEnergy());
+                if (consumption.signum() < 0)
+                {
+                    continue;
+                }
+                MeterEnergyTrendPoint point = points.get(bucketEntry.getKey());
+                BigDecimal total = point.getConsumptionKwh() == null ? BigDecimal.ZERO : point.getConsumptionKwh();
+                point.setConsumptionKwh(total.add(consumption));
+                point.setMeterCount(point.getMeterCount() + 1);
+            }
+        }
+
+        for (MeterEnergyTrendPoint point : points)
+        {
+            if (point.getMeterCount() > 0)
+            {
+                point.setConsumptionKwh(point.getConsumptionKwh().setScale(2, RoundingMode.HALF_UP));
+            }
+        }
+        return points;
+    }
+
+    private TrendRange resolveTrendRange(String range)
+    {
+        Calendar calendar = Calendar.getInstance();
+        Date endTime = calendar.getTime();
+        if (RANGE_7D.equals(range) || RANGE_30D.equals(range))
+        {
+            int bucketCount = RANGE_7D.equals(range) ? 7 : 30;
+            calendar.set(Calendar.HOUR_OF_DAY, 0);
+            calendar.set(Calendar.MINUTE, 0);
+            calendar.set(Calendar.SECOND, 0);
+            calendar.set(Calendar.MILLISECOND, 0);
+            calendar.add(Calendar.DAY_OF_YEAR, -(bucketCount - 1));
+            return new TrendRange(calendar.getTime(), endTime, bucketCount, Calendar.DAY_OF_YEAR, "MM-dd");
+        }
+        calendar.set(Calendar.MINUTE, 0);
+        calendar.set(Calendar.SECOND, 0);
+        calendar.set(Calendar.MILLISECOND, 0);
+        calendar.add(Calendar.HOUR_OF_DAY, -23);
+        return new TrendRange(calendar.getTime(), endTime, 24, Calendar.HOUR_OF_DAY, "HH:00");
+    }
+
+    private List<MeterEnergyTrendPoint> createTrendPoints(TrendRange trendRange)
+    {
+        List<MeterEnergyTrendPoint> points = new ArrayList<>();
+        Calendar calendar = Calendar.getInstance();
+        calendar.setTime(trendRange.beginTime);
+        SimpleDateFormat labelFormat = new SimpleDateFormat(trendRange.labelPattern, Locale.getDefault());
+        for (int index = 0; index < trendRange.bucketCount; index++)
+        {
+            MeterEnergyTrendPoint point = new MeterEnergyTrendPoint();
+            point.setLabel(labelFormat.format(calendar.getTime()));
+            point.setMeterCount(0);
+            points.add(point);
+            calendar.add(trendRange.calendarField, 1);
+        }
+        return points;
+    }
+
+    private Integer getBucketIndex(Date collectTime, TrendRange trendRange)
+    {
+        if (collectTime == null || collectTime.before(trendRange.beginTime) || collectTime.after(trendRange.endTime))
+        {
+            return null;
+        }
+        Calendar bucketStart = Calendar.getInstance();
+        bucketStart.setTime(trendRange.beginTime);
+        for (int index = 0; index < trendRange.bucketCount; index++)
+        {
+            Calendar bucketEnd = (Calendar) bucketStart.clone();
+            bucketEnd.add(trendRange.calendarField, 1);
+            if (!collectTime.before(bucketStart.getTime()) && collectTime.before(bucketEnd.getTime()))
+            {
+                return index;
+            }
+            bucketStart = bucketEnd;
+        }
+        return null;
+    }
+
+    private static class TrendRange
+    {
+        private final Date beginTime;
+        private final Date endTime;
+        private final int bucketCount;
+        private final int calendarField;
+        private final String labelPattern;
+
+        private TrendRange(Date beginTime, Date endTime, int bucketCount, int calendarField, String labelPattern)
+        {
+            this.beginTime = beginTime;
+            this.endTime = endTime;
+            this.bucketCount = bucketCount;
+            this.calendarField = calendarField;
+            this.labelPattern = labelPattern;
+        }
     }
 
     private void enrichCards(List<MeterCard> list)

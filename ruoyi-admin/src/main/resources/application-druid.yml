@@ -59,3 +59,27 @@ spring:
                 wall:
                     config:
                         multi-statement-allow: true
+
+# 热泵遥测数据库，仅供热泵监控只读查询。
+heat-pump:
+  datasource:
+    driver-class-name: org.postgresql.Driver
+    jdbc-url: ${HEAT_PUMP_DB_URL:jdbc:postgresql://localhost:11451/ma}
+    username: ${HEAT_PUMP_DB_USERNAME:postgres}
+    password: ${HEAT_PUMP_DB_PASSWORD}
+    maximum-pool-size: 5
+    minimum-idle: 1
+    connection-timeout: 3000
+
+# 电表遥测数据库，由 MeterIngestionWorker 写入，仅供仪表盘只读查询。
+meter-telemetry:
+  datasource:
+    # Disabled by default: dashboard telemetry reads use the MySQL SLAVE datasource.
+    enabled: ${METER_TELEMETRY_DB_ENABLED:false}
+    driver-class-name: org.postgresql.Driver
+    jdbc-url: ${METER_TELEMETRY_DB_URL:jdbc:postgresql://localhost:11451/ma}
+    username: ${METER_TELEMETRY_DB_USERNAME:postgres}
+    password: ${METER_TELEMETRY_DB_PASSWORD}
+    maximum-pool-size: 5
+    minimum-idle: 1
+    connection-timeout: 3000

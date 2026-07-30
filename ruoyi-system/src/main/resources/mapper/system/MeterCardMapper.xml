@@ -92,6 +92,9 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
 
     <sql id="BaseWhereClause">
         WHERE IFNULL(m.is_enabled, 1) = 1
+        <if test="meterId != null">
+            AND m.id = #{meterId}
+        </if>
         <if test="meterName != null and meterName != ''">
             AND m.meter_name LIKE CONCAT('%', #{meterName}, '%')
         </if>
@@ -114,6 +117,7 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
             AND h.collect_time <![CDATA[<=]]> #{endTime}
         </if>
     </sql>
+
 
     <select id="selectMeterCards" resultMap="MeterCardResult">
         SELECT
@@ -169,6 +173,36 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         ORDER BY m.is_toolbar DESC, m.slave_address ASC, m.id ASC
     </select>
 
+    <select id="selectRealtimeHistoryTrend" parameterType="MeterCard" resultMap="MeterCardResult">
+        SELECT
+            h.collect_time AS data_collect_time,
+            h.collect_time AS last_collect_time,
+            h.voltage_a, h.voltage_b, h.voltage_c,
+            h.current_a, h.current_b, h.current_c,
+            h.active_power_total, h.reactive_power_total,
+            h.apparent_power_total, h.power_factor_total, h.frequency
+        FROM meter_realtime_history h
+        WHERE h.meter_id = #{meterId}
+          AND h.collect_time <![CDATA[>=]]> #{beginTime}
+          AND h.collect_time <![CDATA[<=]]> #{endTime}
+        ORDER BY h.collect_time
+        LIMIT 240
+    </select>
+
+    <select id="selectEnergyHistoryTrend" parameterType="MeterCard" resultMap="MeterCardResult">
+        SELECT
+            h.collect_time AS data_collect_time,
+            h.collect_time AS last_collect_time,
+            h.forward_active_energy, h.reverse_active_energy,
+            h.forward_reactive_energy, h.reverse_reactive_energy
+        FROM meter_energy_history h
+        WHERE h.meter_id = #{meterId}
+          AND h.collect_time <![CDATA[>=]]> #{beginTime}
+          AND h.collect_time <![CDATA[<=]]> #{endTime}
+        ORDER BY h.collect_time
+        LIMIT 240
+    </select>
+
     <select id="selectRealtimeHistory" parameterType="MeterCard" resultMap="MeterCardResult">
         SELECT
             <include refid="MeterBaseColumns" />,
@@ -187,15 +221,11 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
             h.power_factor_total,
             h.frequency,
             h.collect_time AS data_collect_time,
-            h.collect_time AS last_collect_time,
-            ms.last_publish_time,
-            ms.status_code AS meter_status_code,
-            ms.is_online
+            h.collect_time AS last_collect_time
         FROM meter_realtime_history h
         INNER JOIN meter m ON m.id = h.meter_id
         LEFT JOIN distribution_box b ON b.id = m.box_id
         LEFT JOIN site s ON s.id = m.site_id
-        LEFT JOIN meter_status ms ON ms.meter_id = m.id
         <include refid="BaseWhereClause" />
         <include refid="HistoryTimeWhereClause" />
         ORDER BY h.collect_time DESC, m.id ASC
@@ -204,10 +234,7 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
     <select id="selectEnergyHistory" parameterType="MeterCard" resultMap="MeterCardResult">
         SELECT
             <include refid="MeterBaseColumns" />,
-            COALESCE(ms.last_collect_time, el.collect_time) AS last_collect_time,
-            ms.last_publish_time,
-            ms.status_code AS meter_status_code,
-            ms.is_online,
+            el.collect_time AS last_collect_time,
             el.collect_time AS data_collect_time,
             el.forward_active_energy,
             el.reverse_active_energy,
@@ -217,7 +244,6 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         INNER JOIN meter m ON m.id = el.meter_id
         LEFT JOIN distribution_box b ON b.id = m.box_id
         LEFT JOIN site s ON s.id = m.site_id
-        LEFT JOIN meter_status ms ON ms.meter_id = m.id
         <include refid="BaseWhereClause" />
         <if test="beginTime != null">
             AND el.collect_time <![CDATA[>=]]> #{beginTime}
@@ -248,7 +274,6 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         INNER JOIN meter m ON m.id = qh.meter_id
         LEFT JOIN distribution_box b ON b.id = m.box_id
         LEFT JOIN site s ON s.id = m.site_id
-        LEFT JOIN meter_status ms ON ms.meter_id = m.id
         <include refid="BaseWhereClause" />
         <if test="beginTime != null">
             AND qh.collect_time <![CDATA[>=]]> #{beginTime}
@@ -259,12 +284,37 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         ORDER BY qh.collect_time DESC, m.id ASC
     </select>
 
+    <select id="selectEnergyReadings" resultType="com.ruoyi.system.domain.MeterEnergyReading">
+        SELECT h.meter_id AS meterId,
+               h.collect_time AS collectTime,
+               h.forward_active_energy AS forwardActiveEnergy
+        FROM meter_energy_history h
+        WHERE h.collect_time <![CDATA[>=]]> #{beginTime}
+          AND h.collect_time <![CDATA[<=]]> #{endTime}
+          AND h.forward_active_energy IS NOT NULL
+        ORDER BY h.meter_id, h.collect_time
+    </select>
+
     <select id="selectRealtimeDetail" resultMap="MeterCardResult">
         SELECT
             <include refid="MeterBaseColumns" />,
             <include refid="RealtimeStatusColumns" />,
-            rl.collect_time AS data_collect_time
+            rl.collect_time AS data_collect_time,
+            el.forward_active_energy,
+            el.reverse_active_energy,
+            el.forward_reactive_energy,
+            el.reverse_reactive_energy,
+            ql.current_thd_a,
+            ql.current_thd_b,
+            ql.current_thd_c,
+            ql.voltage_thd_a,
+            ql.voltage_thd_b,
+            ql.voltage_thd_c,
+            ql.voltage_unbalance,
+            ql.current_unbalance
         <include refid="BaseJoinClause" />
+        LEFT JOIN meter_energy_latest el ON el.meter_id = m.id
+        LEFT JOIN meter_power_quality_latest ql ON ql.meter_id = m.id
         WHERE m.id = #{meterId}
         LIMIT 1
     </select>
