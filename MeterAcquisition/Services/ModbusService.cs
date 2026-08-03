@@ -153,6 +153,19 @@ namespace MeterAcquisition
             }
         }
 
+        public ushort[] ReadHoldingRegisterValues(byte slaveAddress, ushort startAddress, ushort quantity)
+        {
+            byte[] data = ReadHoldingRegisters(slaveAddress, startAddress, quantity);
+            if (data == null || data.Length != quantity * 2)
+                return null;
+
+            var values = new ushort[quantity];
+            for (int index = 0; index < quantity; index++)
+                values[index] = (ushort)((data[index * 2] << 8) | data[index * 2 + 1]);
+
+            return values;
+        }
+
         /// <summary>
         /// 写入多个保持寄存器
         /// </summary>

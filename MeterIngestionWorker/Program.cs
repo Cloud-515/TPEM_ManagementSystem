@@ -30,6 +30,7 @@ namespace MeterIngestionWorker
         private static TimeSpan EnergyHistoryInterval;
         private static TimeSpan QualityHistoryInterval;
         private static TimeSpan OfflineTimeout;
+        private static TimeSpan HeatPumpOfflineTimeout;
         private static float VoltageAbsoluteChangeThreshold;
         private static float VoltageRelativeChangeThreshold;
         private static float CurrentAbsoluteChangeThreshold;
@@ -50,6 +51,8 @@ namespace MeterIngestionWorker
         private static bool _subscribeLegacyTopic;
         private static string _mqttTopicPattern;
         private static string _mqttRegistryTopicPattern;
+        private static string _mqttHeatPumpTopicPattern;
+        private static string _mqttThermostatTopicPattern;
         private static string _mqttUsername;
         private static string _mqttPassword;
         private static string _siteCode;
@@ -99,12 +102,14 @@ namespace MeterIngestionWorker
         private static void LoadConfiguration()
         {
             _mqttHost = GetRequiredAppSetting("MqttHost");
-            _mqttPort = int.Parse(GetAppSetting("MqttPort", "2883"), CultureInfo.InvariantCulture);
+            _mqttPort = int.Parse(GetAppSetting("MqttPort", "1883"), CultureInfo.InvariantCulture);
             _mqttClientId = GetAppSetting("MqttClientId", "meter-ingestion-worker");
             _mqttLegacyTopic = GetAppSetting("MqttLegacyTopic", "meter/data");
             _subscribeLegacyTopic = bool.TryParse(GetAppSetting("SubscribeLegacyTopic", "false"), out var subscribeLegacyTopic) && subscribeLegacyTopic;
             _mqttTopicPattern = GetAppSetting("MqttTopicPattern", "meter/+/+/+");
             _mqttRegistryTopicPattern = GetAppSetting("MqttRegistryTopicPattern", "meter/registry/+/+");
+            _mqttHeatPumpTopicPattern = GetAppSetting("HeatPumpMqttTopicPattern", "tpem/+/heatpump/+/telemetry");
+            _mqttThermostatTopicPattern = GetAppSetting("ThermostatMqttTopicPattern", "tpem/+/thermostat/+/telemetry");
             _mqttUsername = GetAppSetting("MqttUsername", string.Empty);
             _mqttPassword = GetAppSetting("MqttPassword", string.Empty);
             _siteCode = GetAppSetting("SiteCode", string.Empty);
@@ -119,6 +124,7 @@ namespace MeterIngestionWorker
             EnergyHistoryInterval = TimeSpan.FromMinutes(GetPositiveIntAppSetting("EnergyHistoryIntervalMinutes", 15));
             QualityHistoryInterval = TimeSpan.FromMinutes(GetPositiveIntAppSetting("QualityHistoryIntervalMinutes", 10));
             OfflineTimeout = TimeSpan.FromSeconds(GetPositiveIntAppSetting("OfflineTimeoutSeconds", 15));
+            HeatPumpOfflineTimeout = TimeSpan.FromSeconds(GetPositiveIntAppSetting("HeatPumpOfflineTimeoutSeconds", 30));
             VoltageAbsoluteChangeThreshold = GetPositiveFloatAppSetting("VoltageAbsoluteChangeThreshold", 3f);
             VoltageRelativeChangeThreshold = GetPositiveFloatAppSetting("VoltageRelativeChangeThreshold", 0.015f);
             CurrentAbsoluteChangeThreshold = GetPositiveFloatAppSetting("CurrentAbsoluteChangeThreshold", 0.5f);
@@ -222,7 +228,9 @@ namespace MeterIngestionWorker
 
             var subscribeBuilder = new MqttClientSubscribeOptionsBuilder()
                 .WithTopicFilter(f => f.WithTopic(_mqttTopicPattern))
-                .WithTopicFilter(f => f.WithTopic(_mqttRegistryTopicPattern));
+                .WithTopicFilter(f => f.WithTopic(_mqttRegistryTopicPattern))
+                .WithTopicFilter(f => f.WithTopic(_mqttHeatPumpTopicPattern))
+                .WithTopicFilter(f => f.WithTopic(_mqttThermostatTopicPattern));
 
             if (_subscribeLegacyTopic && !string.IsNullOrWhiteSpace(_mqttLegacyTopic) && !string.Equals(_mqttLegacyTopic, _mqttTopicPattern, StringComparison.OrdinalIgnoreCase))
             {
@@ -235,7 +243,9 @@ namespace MeterIngestionWorker
             var topics = new System.Collections.Generic.List<string>
             {
                 _mqttTopicPattern,
-                _mqttRegistryTopicPattern
+                _mqttRegistryTopicPattern,
+                _mqttHeatPumpTopicPattern,
+                _mqttThermostatTopicPattern
             };
             if (_subscribeLegacyTopic && !string.IsNullOrWhiteSpace(_mqttLegacyTopic) && !string.Equals(_mqttLegacyTopic, _mqttTopicPattern, StringComparison.OrdinalIgnoreCase))
             {
@@ -271,6 +281,18 @@ namespace MeterIngestionWorker
             if (IsRegistryTopic(envelope.Topic))
             {
                 HandleRegistryEnvelope(envelope);
+                return;
+            }
+
+            if (IsHeatPumpTopic(envelope.Topic))
+            {
+                HandleHeatPumpTelemetryEnvelope(envelope);
+                return;
+            }
+
+            if (IsThermostatTopic(envelope.Topic))
+            {
+                HandleThermostatTelemetryEnvelope(envelope);
                 return;
             }
 
@@ -358,6 +380,389 @@ namespace MeterIngestionWorker
             {
                 MarkLogFailed(logId, envelope, ex.Message);
                 throw;
+            }
+        }
+
+        private static void HandleHeatPumpTelemetryEnvelope(MqttEnvelope envelope)
+        {
+            var telemetry = JsonConvert.DeserializeObject<HeatPumpTelemetryMessage>(envelope.PayloadJson, JsonSettings);
+            ValidateHeatPumpTelemetry(envelope.Topic, telemetry);
+
+            using (var connection = new NpgsqlConnection(_mysqlConnectionString))
+            {
+                connection.Open();
+                using (var transaction = connection.BeginTransaction())
+                {
+                    if (!TryInsertHeatPumpMessageLog(connection, transaction, envelope.Topic, telemetry.MessageId))
+                    {
+                        transaction.Commit();
+                        Console.WriteLine("热泵消息已处理，跳过重复投递: " + envelope.Topic);
+                        return;
+                    }
+
+                    var deviceId = UpsertHeatPumpDevice(connection, transaction, telemetry);
+                    InsertHeatPumpTelemetryHistory(connection, transaction, deviceId, telemetry);
+                    UpsertHeatPumpDeviceState(connection, transaction, deviceId, telemetry);
+                    UpdateHeatPumpAlarmState(connection, transaction, deviceId, telemetry);
+                    RecoverHeatPumpOfflineAlarm(connection, transaction, deviceId, telemetry.ModuleIndex, telemetry.CollectedAt);
+                    transaction.Commit();
+                }
+            }
+        }
+
+        private static void HandleThermostatTelemetryEnvelope(MqttEnvelope envelope)
+        {
+            var telemetry = JsonConvert.DeserializeObject<ThermostatTelemetryMessage>(envelope.PayloadJson, JsonSettings);
+            ValidateThermostatTelemetry(envelope.Topic, telemetry);
+
+            using (var connection = new NpgsqlConnection(_mysqlConnectionString))
+            {
+                connection.Open();
+                using (var transaction = connection.BeginTransaction())
+                {
+                    if (!TryInsertThermostatMessageLog(connection, transaction, telemetry.MessageId))
+                    {
+                        transaction.Commit();
+                        Console.WriteLine("温控器消息已处理，跳过重复投递: " + envelope.Topic);
+                        return;
+                    }
+
+                    var deviceId = UpsertThermostatDevice(connection, transaction, telemetry);
+                    InsertThermostatTelemetryHistory(connection, transaction, deviceId, telemetry);
+                    UpsertThermostatDeviceState(connection, transaction, deviceId, telemetry);
+                    transaction.Commit();
+                }
+            }
+        }
+
+        private static void ValidateThermostatTelemetry(string topic, ThermostatTelemetryMessage telemetry)
+        {
+            if (telemetry == null)
+            {
+                throw new InvalidOperationException("温控器遥测消息为空或 JSON 反序列化失败。");
+            }
+
+            if (!string.Equals(telemetry.MessageType, "thermostat.telemetry.v1", StringComparison.Ordinal)
+                || telemetry.MessageId == Guid.Empty
+                || string.IsNullOrWhiteSpace(telemetry.SiteCode)
+                || string.IsNullOrWhiteSpace(telemetry.DeviceKey)
+                || telemetry.SlaveId < 1 || telemetry.SlaveId > 99
+                || telemetry.CollectedAt == default(DateTimeOffset))
+            {
+                throw new InvalidOperationException("温控器消息缺少有效身份或采集时间。");
+            }
+
+            var segments = topic == null ? new string[0] : topic.Split('/');
+            if (segments.Length != 5
+                || !string.Equals(segments[0], "tpem", StringComparison.OrdinalIgnoreCase)
+                || !string.Equals(segments[2], "thermostat", StringComparison.OrdinalIgnoreCase)
+                || !string.Equals(segments[4], "telemetry", StringComparison.OrdinalIgnoreCase)
+                || !string.Equals(segments[1], SanitizeTopicSegment(telemetry.SiteCode), StringComparison.Ordinal)
+                || !string.Equals(segments[3], SanitizeTopicSegment(telemetry.DeviceKey), StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException("温控器主题与消息身份不一致。");
+            }
+        }
+
+        private static bool TryInsertThermostatMessageLog(NpgsqlConnection connection, NpgsqlTransaction transaction, Guid messageId)
+        {
+            const string sql = @"
+INSERT INTO thermostat_message_log (message_id)
+VALUES (@message_id)
+ON CONFLICT (message_id) DO NOTHING;";
+            using (var command = new NpgsqlCommand(sql, connection, transaction))
+            {
+                command.Parameters.AddWithValue("@message_id", messageId);
+                return command.ExecuteNonQuery() == 1;
+            }
+        }
+
+        private static long UpsertThermostatDevice(NpgsqlConnection connection, NpgsqlTransaction transaction, ThermostatTelemetryMessage telemetry)
+        {
+            const string sql = @"
+INSERT INTO thermostat_device (site_code, device_key, slave_id, name, group_name)
+VALUES (@site_code, @device_key, @slave_id, @name, @group_name)
+ON CONFLICT (site_code, device_key) DO UPDATE SET
+slave_id = EXCLUDED.slave_id,
+name = EXCLUDED.name,
+group_name = EXCLUDED.group_name,
+updated_at = CURRENT_TIMESTAMP
+RETURNING id;";
+            using (var command = new NpgsqlCommand(sql, connection, transaction))
+            {
+                command.Parameters.AddWithValue("@site_code", telemetry.SiteCode.Trim());
+                command.Parameters.AddWithValue("@device_key", telemetry.DeviceKey.Trim());
+                command.Parameters.AddWithValue("@slave_id", telemetry.SlaveId);
+                command.Parameters.AddWithValue("@name", string.IsNullOrWhiteSpace(telemetry.Name) ? (object)DBNull.Value : telemetry.Name.Trim());
+                command.Parameters.AddWithValue("@group_name", string.IsNullOrWhiteSpace(telemetry.GroupName) ? (object)DBNull.Value : telemetry.GroupName.Trim());
+                return Convert.ToInt64(command.ExecuteScalar(), CultureInfo.InvariantCulture);
+            }
+        }
+
+        private static void InsertThermostatTelemetryHistory(NpgsqlConnection connection, NpgsqlTransaction transaction, long deviceId, ThermostatTelemetryMessage telemetry)
+        {
+            const string sql = @"
+INSERT INTO thermostat_telemetry_history
+(device_id, collected_at, is_online, room_temperature_celsius, set_temperature_celsius, power_state, mode, fan_speed)
+VALUES
+(@device_id, @collected_at, @is_online, @room_temperature_celsius, @set_temperature_celsius, @power_state, @mode, @fan_speed);";
+            using (var command = new NpgsqlCommand(sql, connection, transaction))
+            {
+                FillThermostatParameters(command, deviceId, telemetry);
+                command.ExecuteNonQuery();
+            }
+        }
+
+        private static void UpsertThermostatDeviceState(NpgsqlConnection connection, NpgsqlTransaction transaction, long deviceId, ThermostatTelemetryMessage telemetry)
+        {
+            const string sql = @"
+INSERT INTO thermostat_device_state
+(device_id, collected_at, is_online, room_temperature_celsius, set_temperature_celsius, power_state, mode, fan_speed)
+VALUES
+(@device_id, @collected_at, @is_online, @room_temperature_celsius, @set_temperature_celsius, @power_state, @mode, @fan_speed)
+ON CONFLICT (device_id) DO UPDATE SET
+collected_at = EXCLUDED.collected_at,
+is_online = EXCLUDED.is_online,
+room_temperature_celsius = EXCLUDED.room_temperature_celsius,
+set_temperature_celsius = EXCLUDED.set_temperature_celsius,
+power_state = EXCLUDED.power_state,
+mode = EXCLUDED.mode,
+fan_speed = EXCLUDED.fan_speed,
+updated_at = CURRENT_TIMESTAMP
+WHERE thermostat_device_state.collected_at <= EXCLUDED.collected_at;";
+            using (var command = new NpgsqlCommand(sql, connection, transaction))
+            {
+                FillThermostatParameters(command, deviceId, telemetry);
+                command.ExecuteNonQuery();
+            }
+        }
+
+        private static void FillThermostatParameters(NpgsqlCommand command, long deviceId, ThermostatTelemetryMessage telemetry)
+        {
+            command.Parameters.AddWithValue("@device_id", deviceId);
+            command.Parameters.AddWithValue("@collected_at", telemetry.CollectedAt.ToUniversalTime());
+            command.Parameters.AddWithValue("@is_online", telemetry.IsOnline);
+            command.Parameters.AddWithValue("@room_temperature_celsius", telemetry.RoomTemperatureCelsius.HasValue ? (object)telemetry.RoomTemperatureCelsius.Value : DBNull.Value);
+            command.Parameters.AddWithValue("@set_temperature_celsius", telemetry.SetTemperatureCelsius.HasValue ? (object)telemetry.SetTemperatureCelsius.Value : DBNull.Value);
+            command.Parameters.AddWithValue("@power_state", string.IsNullOrWhiteSpace(telemetry.PowerState) ? (object)DBNull.Value : telemetry.PowerState);
+            command.Parameters.AddWithValue("@mode", string.IsNullOrWhiteSpace(telemetry.Mode) ? (object)DBNull.Value : telemetry.Mode);
+            command.Parameters.AddWithValue("@fan_speed", string.IsNullOrWhiteSpace(telemetry.FanSpeed) ? (object)DBNull.Value : telemetry.FanSpeed);
+        }
+
+        private static void ValidateHeatPumpTelemetry(string topic, HeatPumpTelemetryMessage telemetry)
+        {
+            if (telemetry == null)
+            {
+                throw new InvalidOperationException("热泵遥测消息为空或 JSON 反序列化失败。");
+            }
+
+            if (!string.Equals(telemetry.MessageType, "heatpump.telemetry.v1", StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException("热泵消息类型无效。");
+            }
+
+            if (telemetry.MessageId == Guid.Empty)
+            {
+                throw new InvalidOperationException("热泵消息缺少 MessageId。");
+            }
+
+            if (string.IsNullOrWhiteSpace(telemetry.SiteCode) || telemetry.ControllerSlaveId <= 0 || telemetry.ModuleIndex < 0)
+            {
+                throw new InvalidOperationException("热泵消息缺少有效站点、控制器或模块身份。");
+            }
+
+            if (telemetry.CollectedAt == default(DateTimeOffset))
+            {
+                throw new InvalidOperationException("热泵消息缺少采集时间。");
+            }
+
+            var segments = topic == null ? new string[0] : topic.Split('/');
+            if (segments.Length != 5
+                || !string.Equals(segments[0], "tpem", StringComparison.OrdinalIgnoreCase)
+                || !string.Equals(segments[2], "heatpump", StringComparison.OrdinalIgnoreCase)
+                || !string.Equals(segments[4], "telemetry", StringComparison.OrdinalIgnoreCase)
+                || !string.Equals(segments[1], SanitizeTopicSegment(telemetry.SiteCode), StringComparison.Ordinal)
+                || !int.TryParse(segments[3], NumberStyles.Integer, CultureInfo.InvariantCulture, out var controllerSlaveId)
+                || controllerSlaveId != telemetry.ControllerSlaveId)
+            {
+                throw new InvalidOperationException("热泵主题与消息身份不一致。");
+            }
+        }
+
+        private static bool TryInsertHeatPumpMessageLog(NpgsqlConnection connection, NpgsqlTransaction transaction, string topic, Guid messageId)
+        {
+            const string sql = @"
+INSERT INTO heat_pump_message_log (topic, message_id)
+VALUES (@topic, @message_id)
+ON CONFLICT (topic, message_id) DO NOTHING;";
+
+            using (var command = new NpgsqlCommand(sql, connection, transaction))
+            {
+                command.Parameters.AddWithValue("@topic", topic);
+                command.Parameters.AddWithValue("@message_id", messageId);
+                return command.ExecuteNonQuery() == 1;
+            }
+        }
+
+        private static long UpsertHeatPumpDevice(NpgsqlConnection connection, NpgsqlTransaction transaction, HeatPumpTelemetryMessage telemetry)
+        {
+            const string sql = @"
+INSERT INTO heat_pump_device (site_code, controller_address, controller_name)
+VALUES (@site_code, @controller_address, @controller_name)
+ON CONFLICT (site_code, controller_address) DO UPDATE SET
+controller_name = EXCLUDED.controller_name,
+updated_at = CURRENT_TIMESTAMP
+RETURNING id;";
+
+            using (var command = new NpgsqlCommand(sql, connection, transaction))
+            {
+                command.Parameters.AddWithValue("@site_code", telemetry.SiteCode.Trim());
+                command.Parameters.AddWithValue("@controller_address", telemetry.ControllerSlaveId);
+                command.Parameters.AddWithValue("@controller_name", string.IsNullOrWhiteSpace(telemetry.GroupName) ? (object)DBNull.Value : telemetry.GroupName.Trim());
+                return Convert.ToInt64(command.ExecuteScalar(), CultureInfo.InvariantCulture);
+            }
+        }
+
+        private static void InsertHeatPumpTelemetryHistory(NpgsqlConnection connection, NpgsqlTransaction transaction, long deviceId, HeatPumpTelemetryMessage telemetry)
+        {
+            const string sql = @"
+INSERT INTO heat_pump_telemetry_history
+(device_id, module_index, collected_at, message_id, module_name, enabled, state_code, run_mode,
+ target_temperature, water_in_temperature, water_out_temperature, ambient_temperature, fault_code, protection_code)
+VALUES
+(@device_id, @module_index, @collected_at, @message_id, @module_name, @enabled, @state_code, @run_mode,
+ @target_temperature, @water_in_temperature, @water_out_temperature, @ambient_temperature, @fault_code, @protection_code);";
+
+            using (var command = new NpgsqlCommand(sql, connection, transaction))
+            {
+                FillHeatPumpTelemetryParameters(command, deviceId, telemetry);
+                command.ExecuteNonQuery();
+            }
+        }
+
+        private static void UpsertHeatPumpDeviceState(NpgsqlConnection connection, NpgsqlTransaction transaction, long deviceId, HeatPumpTelemetryMessage telemetry)
+        {
+            const string sql = @"
+INSERT INTO heat_pump_device_state
+(device_id, module_index, module_name, last_collect_time, last_message_id, is_online, state_code, run_mode,
+ target_temperature, water_in_temperature, water_out_temperature, ambient_temperature, fault_code, protection_code)
+VALUES
+(@device_id, @module_index, @module_name, @collected_at, @message_id, TRUE, @state_code, @run_mode,
+ @target_temperature, @water_in_temperature, @water_out_temperature, @ambient_temperature, @fault_code, @protection_code)
+ON CONFLICT (device_id, module_index) DO UPDATE SET
+module_name = EXCLUDED.module_name,
+last_collect_time = EXCLUDED.last_collect_time,
+last_message_id = EXCLUDED.last_message_id,
+is_online = TRUE,
+state_code = EXCLUDED.state_code,
+run_mode = EXCLUDED.run_mode,
+target_temperature = EXCLUDED.target_temperature,
+water_in_temperature = EXCLUDED.water_in_temperature,
+water_out_temperature = EXCLUDED.water_out_temperature,
+ambient_temperature = EXCLUDED.ambient_temperature,
+fault_code = EXCLUDED.fault_code,
+protection_code = EXCLUDED.protection_code,
+updated_at = CURRENT_TIMESTAMP
+WHERE heat_pump_device_state.last_collect_time <= EXCLUDED.last_collect_time;";
+
+            using (var command = new NpgsqlCommand(sql, connection, transaction))
+            {
+                FillHeatPumpTelemetryParameters(command, deviceId, telemetry);
+                command.ExecuteNonQuery();
+            }
+        }
+
+        private static void FillHeatPumpTelemetryParameters(NpgsqlCommand command, long deviceId, HeatPumpTelemetryMessage telemetry)
+        {
+            command.Parameters.AddWithValue("@device_id", deviceId);
+            command.Parameters.AddWithValue("@module_index", telemetry.ModuleIndex);
+            command.Parameters.AddWithValue("@collected_at", telemetry.CollectedAt.ToUniversalTime());
+            command.Parameters.AddWithValue("@message_id", telemetry.MessageId);
+            command.Parameters.AddWithValue("@module_name", string.IsNullOrWhiteSpace(telemetry.ModuleName) ? (object)DBNull.Value : telemetry.ModuleName.Trim());
+            command.Parameters.AddWithValue("@enabled", telemetry.IsEnabled);
+            command.Parameters.AddWithValue("@state_code", telemetry.Status.ToString(CultureInfo.InvariantCulture));
+            command.Parameters.AddWithValue("@run_mode", telemetry.RunMode);
+            command.Parameters.AddWithValue("@target_temperature", telemetry.TargetTemperature);
+            command.Parameters.AddWithValue("@water_in_temperature", telemetry.ReturnWaterTemperature);
+            command.Parameters.AddWithValue("@water_out_temperature", telemetry.OutletWaterTemperature);
+            command.Parameters.AddWithValue("@ambient_temperature", telemetry.AmbientTemperature);
+            command.Parameters.AddWithValue("@fault_code", ParseHeatPumpCode(telemetry.FaultCode));
+            command.Parameters.AddWithValue("@protection_code", 0);
+        }
+
+        private static int ParseHeatPumpCode(string value)
+        {
+            return int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var code) && code >= 0 ? code : 0;
+        }
+
+        private static void UpdateHeatPumpAlarmState(NpgsqlConnection connection, NpgsqlTransaction transaction, long deviceId, HeatPumpTelemetryMessage telemetry)
+        {
+            var faultCode = ParseHeatPumpCode(telemetry.FaultCode);
+            if (faultCode > 0)
+            {
+                UpsertHeatPumpAlarm(connection, transaction, deviceId, telemetry.ModuleIndex, "fault", faultCode, telemetry.CollectedAt, "故障代码: " + faultCode.ToString(CultureInfo.InvariantCulture));
+                return;
+            }
+
+            const string sql = @"
+UPDATE heat_pump_alarm_event
+SET recovered_at = @recovered_at,
+    updated_at = CURRENT_TIMESTAMP
+WHERE device_id = @device_id
+  AND module_index = @module_index
+  AND alarm_type = 'fault'
+  AND recovered_at IS NULL;";
+
+            using (var command = new NpgsqlCommand(sql, connection, transaction))
+            {
+                command.Parameters.AddWithValue("@recovered_at", telemetry.CollectedAt.ToUniversalTime());
+                command.Parameters.AddWithValue("@device_id", deviceId);
+                command.Parameters.AddWithValue("@module_index", telemetry.ModuleIndex);
+                command.ExecuteNonQuery();
+            }
+        }
+
+        private static void RecoverHeatPumpOfflineAlarm(NpgsqlConnection connection, NpgsqlTransaction transaction, long deviceId, int moduleIndex, DateTimeOffset collectedAt)
+        {
+            const string sql = @"
+UPDATE heat_pump_alarm_event
+SET recovered_at = @recovered_at,
+    updated_at = CURRENT_TIMESTAMP
+WHERE device_id = @device_id
+  AND module_index = @module_index
+  AND alarm_type = 'offline'
+  AND recovered_at IS NULL;";
+
+            using (var command = new NpgsqlCommand(sql, connection, transaction))
+            {
+                command.Parameters.AddWithValue("@recovered_at", collectedAt.ToUniversalTime());
+                command.Parameters.AddWithValue("@device_id", deviceId);
+                command.Parameters.AddWithValue("@module_index", moduleIndex);
+                command.ExecuteNonQuery();
+            }
+        }
+
+        private static void UpsertHeatPumpAlarm(NpgsqlConnection connection, NpgsqlTransaction transaction, long deviceId, int moduleIndex, string alarmType, int alarmCode, DateTimeOffset occurredAt, string message)
+        {
+            const string sql = @"
+INSERT INTO heat_pump_alarm_event
+(device_id, module_index, alarm_type, alarm_code, opened_at, last_seen_at, message)
+VALUES
+(@device_id, @module_index, @alarm_type, @alarm_code, @occurred_at, @occurred_at, @message)
+ON CONFLICT (device_id, module_index, alarm_type, alarm_code) WHERE recovered_at IS NULL DO UPDATE SET
+last_seen_at = EXCLUDED.last_seen_at,
+message = EXCLUDED.message,
+updated_at = CURRENT_TIMESTAMP;";
+
+            using (var command = new NpgsqlCommand(sql, connection, transaction))
+            {
+                command.Parameters.AddWithValue("@device_id", deviceId);
+                command.Parameters.AddWithValue("@module_index", moduleIndex);
+                command.Parameters.AddWithValue("@alarm_type", alarmType);
+                command.Parameters.AddWithValue("@alarm_code", alarmCode);
+                command.Parameters.AddWithValue("@occurred_at", occurredAt.ToUniversalTime());
+                command.Parameters.AddWithValue("@message", message);
+                command.ExecuteNonQuery();
             }
         }
 
@@ -624,12 +1029,13 @@ LIMIT 1;";
         {
             const string sql = @"
 INSERT INTO meter
-(site_id, box_id, meter_code, meter_name, slave_address, location, is_enabled, is_toolbar, mqtt_topic, last_seen_time)
+(site_id, box_id, meter_code, meter_name, device_type, slave_address, location, is_enabled, is_toolbar, mqtt_topic, last_seen_time)
 VALUES
-(@site_id, @box_id, @meter_code, @meter_name, @slave_address, @location, TRUE, @is_toolbar, @mqtt_topic, @last_seen_time)
+(@site_id, @box_id, @meter_code, @meter_name, @device_type, @slave_address, @location, TRUE, @is_toolbar, @mqtt_topic, @last_seen_time)
 ON CONFLICT (site_id, meter_code) DO UPDATE SET
 box_id = EXCLUDED.box_id,
 meter_name = EXCLUDED.meter_name,
+device_type = EXCLUDED.device_type,
 slave_address = EXCLUDED.slave_address,
 location = EXCLUDED.location,
 is_enabled = TRUE,
@@ -644,6 +1050,7 @@ updated_at = CURRENT_TIMESTAMP;";
                 command.Parameters.AddWithValue("@box_id", boxId);
                 command.Parameters.AddWithValue("@meter_code", item.MeterCode);
                 command.Parameters.AddWithValue("@meter_name", string.IsNullOrWhiteSpace(item.MeterName) ? item.MeterCode : item.MeterName);
+                command.Parameters.AddWithValue("@device_type", (object)(item.DeviceModel ?? "Legacy"));
                 command.Parameters.AddWithValue("@slave_address", (int)item.SlaveAddress);
                 command.Parameters.AddWithValue("@location", (object)(item.Location ?? registry.BoxName ?? string.Empty));
                 command.Parameters.AddWithValue("@is_toolbar", item.IsToolbar);
@@ -1180,6 +1587,29 @@ WHERE is_online = TRUE
                             command.Parameters.AddWithValue("@deadline", GetBeijingNow().UtcDateTime - OfflineTimeout);
                             await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
                         }
+
+                        const string heatPumpSql = @"
+WITH newly_offline AS (
+    UPDATE heat_pump_device_state
+    SET is_online = FALSE,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE is_online = TRUE
+      AND last_collect_time < @deadline
+    RETURNING device_id, module_index
+)
+INSERT INTO heat_pump_alarm_event
+(device_id, module_index, alarm_type, alarm_code, opened_at, last_seen_at, message)
+SELECT device_id, module_index, 'offline', 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, '模块遥测超时'
+FROM newly_offline
+ON CONFLICT (device_id, module_index, alarm_type, alarm_code) WHERE recovered_at IS NULL DO UPDATE SET
+last_seen_at = EXCLUDED.last_seen_at,
+updated_at = CURRENT_TIMESTAMP;";
+
+                        using (var command = new NpgsqlCommand(heatPumpSql, connection))
+                        {
+                            command.Parameters.AddWithValue("@deadline", GetBeijingNow().UtcDateTime - HeatPumpOfflineTimeout);
+                            await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+                        }
                     }
                 }
                 catch (OperationCanceledException)
@@ -1347,6 +1777,34 @@ WHERE id = @id;";
             {
                 telemetry.MeterCode = segments[3];
             }
+        }
+
+        private static bool IsHeatPumpTopic(string topic)
+        {
+            if (string.IsNullOrWhiteSpace(topic))
+            {
+                return false;
+            }
+
+            var segments = topic.Split('/');
+            return segments.Length == 5
+                && string.Equals(segments[0], "tpem", StringComparison.OrdinalIgnoreCase)
+                && string.Equals(segments[2], "heatpump", StringComparison.OrdinalIgnoreCase)
+                && string.Equals(segments[4], "telemetry", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool IsThermostatTopic(string topic)
+        {
+            if (string.IsNullOrWhiteSpace(topic))
+            {
+                return false;
+            }
+
+            var segments = topic.Split('/');
+            return segments.Length == 5
+                && string.Equals(segments[0], "tpem", StringComparison.OrdinalIgnoreCase)
+                && string.Equals(segments[2], "thermostat", StringComparison.OrdinalIgnoreCase)
+                && string.Equals(segments[4], "telemetry", StringComparison.OrdinalIgnoreCase);
         }
 
         private static bool IsRegistryTopic(string topic)

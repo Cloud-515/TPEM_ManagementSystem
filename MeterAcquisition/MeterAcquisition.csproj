@@ -9,6 +9,7 @@
     <RootNamespace>MeterAcquisition</RootNamespace>
     <AssemblyName>MeterAcquisition</AssemblyName>
     <TargetFrameworkVersion>v4.8</TargetFrameworkVersion>
+    <LangVersion>latest</LangVersion>
     <FileAlignment>512</FileAlignment>
     <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
     <Deterministic>true</Deterministic>
@@ -148,11 +149,68 @@
     <Compile Include="Services\MqttPublisherService.cs" />
     <Compile Include="Services\ModbusService.cs" />
     <Compile Include="Services\MeterDataService.cs" />
+    <Compile Include="Services\IMeterDataReader.cs" />
+    <Compile Include="Services\Amc96lE4MeterDataReader.cs" />
     <Compile Include="Domain\MeterManager.cs" />
     <Compile Include="UI\Rendering\MeterGridRenderer.cs" />
     <Compile Include="Services\HistoryQueryService.cs" />
+    <Compile Include="HeatPump\CompilerCompatibility.cs" />
+    <Compile Include="HeatPump\GlobalUsings.cs" />
+    <Compile Include="HeatPump\Application\HeatPumpWorkspaceConfigStore.cs" />
+    <Compile Include="HeatPump\Application\HeatPumpWorkspaceConfiguration.cs" />
+    <Compile Include="HeatPump\Application\HeatPumpTelemetryRefreshResult.cs" />
+    <Compile Include="HeatPump\Application\HeatPumpWorkspaceSnapshot.cs" />
+    <Compile Include="HeatPump\Application\HeatPumpWorkspaceService.cs" />
+    <Compile Include="HeatPump\Domain\CommSettings.cs" />
+    <Compile Include="HeatPump\Domain\HeatPumpDashboardManager.cs" />
+    <Compile Include="HeatPump\Domain\HeatPumpModuleInfo.cs" />
+    <Compile Include="HeatPump\Domain\HeatPumpTelemetry.cs" />
+    <Compile Include="HeatPump\Domain\HeatPumpUnitInfo.cs" />
+    <Compile Include="HeatPump\Domain\WiredControllerInfo.cs" />
+    <Compile Include="HeatPump\Forms\HeatPumpDetailsForm.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="HeatPump\Forms\HeatPumpMonitorControl.cs">
+      <SubType>UserControl</SubType>
+    </Compile>
+    <Compile Include="HeatPump\Forms\HeatPumpDeviceEditorDialog.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="HeatPump\Forms\HeatPumpModuleGroupEditorDialog.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="HeatPump\Services\HeatPumpHistoryQueryService.cs" />
+    <Compile Include="HeatPump\Services\HeatPumpRegisterMap.cs" />
+    <Compile Include="HeatPump\Services\HeatPumpTelemetryParser.cs" />
+    <Compile Include="HeatPump\Services\IHeatPumpDataService.cs" />
+    <Compile Include="HeatPump\Services\MockHeatPumpDataService.cs" />
+    <Compile Include="HeatPump\Services\ModbusHeatPumpDataService.cs" />
+    <Compile Include="HeatPump\Services\ModbusRtuClient.cs" />
+    <Compile Include="HeatPump\Services\SharedBusHeatPumpDataService.cs" />
+    <Compile Include="Thermostat\Application\ThermostatWorkspaceConfiguration.cs" />
+    <Compile Include="Thermostat\Application\ThermostatWorkspaceConfigStore.cs" />
+    <Compile Include="Thermostat\Application\ThermostatWorkspaceService.cs" />
+    <Compile Include="Thermostat\Domain\ThermostatDeviceInfo.cs" />
+    <Compile Include="Thermostat\Domain\ThermostatTelemetry.cs" />
+    <Compile Include="Thermostat\Forms\ThermostatMonitorControl.cs">
+      <SubType>UserControl</SubType>
+    </Compile>
+    <Compile Include="Thermostat\Forms\ThermostatDetailsForm.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="Thermostat\Domain\ThermostatFanControlDiagnostic.cs" />
+    <Compile Include="Thermostat\Forms\ThermostatFanDiagnosticForm.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="Thermostat\Protocol\ThermostatRegisterMap.cs" />
+    <Compile Include="Thermostat\Protocol\ThermostatTelemetryParser.cs" />
+    <Compile Include="Thermostat\Services\IThermostatDataService.cs" />
+    <Compile Include="Thermostat\Services\ModbusThermostatDataService.cs" />
     <Compile Include="Forms\MeterDetailsForm.cs">
       <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="Forms\MeterOverviewControl.cs">
+      <SubType>UserControl</SubType>
     </Compile>
     <Compile Include="Forms\MainForm.cs">
       <SubType>Form</SubType>

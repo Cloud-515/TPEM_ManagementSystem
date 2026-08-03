@@ -76,6 +76,7 @@ namespace MeterAcquisition
         public string Location { get; set; }
         public byte SlaveAddress { get; set; }
         public bool IsToolbar { get; set; }
+        public string DeviceModel { get; set; }
         public DateTime? LastSuccessfulReadTime { get; set; }
         public RealTimeData RealTime { get; set; }
         public EnergyData Energy { get; set; }

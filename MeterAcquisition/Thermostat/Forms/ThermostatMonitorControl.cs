@@ -1,0 +1,263 @@
+using System;
+using System.Drawing;
+using System.Linq;
+using System.Threading.Tasks;
+using System.Windows.Forms;
+using MeterAcquisition.HeatPump.Domain;
+using MeterAcquisition.Thermostat.Application;
+using MeterAcquisition.Thermostat.Domain;
+
+namespace MeterAcquisition.Thermostat.Forms
+{
+    public sealed class ThermostatMonitorControl : UserControl
+    {
+        private readonly ThermostatWorkspaceService _workspace = new ThermostatWorkspaceService();
+        private readonly ThermostatWorkspaceConfigStore _configStore = new ThermostatWorkspaceConfigStore();
+        private readonly DataGridView _grid;
+        private readonly ComboBox _portComboBox = new ComboBox { DropDownStyle = ComboBoxStyle.DropDown, Width = 130, MinimumSize = new Size(130, 32) };
+        private readonly NumericUpDown _startAddress = new NumericUpDown { Minimum = 1, Maximum = 99, Value = 1, Width = 60, MinimumSize = new Size(60, 32) };
+        private readonly NumericUpDown _endAddress = new NumericUpDown { Minimum = 1, Maximum = 99, Value = 99, Width = 60, MinimumSize = new Size(60, 32) };
+        private readonly ComboBox _modeComboBox = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 120, MinimumSize = new Size(120, 32) };
+        private readonly ComboBox _fanSpeedComboBox = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 90, MinimumSize = new Size(90, 32) };
+        private readonly Label _statusLabel = new Label { AutoSize = true, MaximumSize = new Size(0, 0), TextAlign = ContentAlignment.MiddleLeft, Text = "未连接" };
+        private readonly System.Windows.Forms.Timer _refreshTimer = new System.Windows.Forms.Timer { Interval = 5000 };
+        private bool _refreshing;
+
+        public ThermostatMonitorControl()
+        {
+            Dock = DockStyle.Fill;
+            _portComboBox.Items.AddRange(System.IO.Ports.SerialPort.GetPortNames().OrderBy(port => port).Cast<object>().ToArray());
+            BindSelections();
+
+            var toolbar = CreateToolbar(out var connectButton, out var disconnectButton, out var scanButton, out var refreshButton, out var powerButton, out var applyModeButton, out var applyFanSpeedButton, out var temperatureButton, out var fanDiagnosticButton);
+            _grid = CreateGrid();
+            var content = new Panel { Dock = DockStyle.Fill, AutoScroll = true };
+            content.Controls.Add(_grid);
+            content.Controls.Add(toolbar);
+            Controls.Add(content);
+
+            connectButton.Click += async (sender, args) => await ConnectAsync();
+            disconnectButton.Click += async (sender, args) => await DisconnectAsync();
+            scanButton.Click += async (sender, args) => await ScanAsync();
+            refreshButton.Click += async (sender, args) => await RefreshAsync();
+            powerButton.Click += async (sender, args) => await ChangePowerAsync();
+            applyModeButton.Click += async (sender, args) => await ApplyModeAsync();
+            applyFanSpeedButton.Click += async (sender, args) => await ApplyFanSpeedAsync();
+            temperatureButton.Click += async (sender, args) => await ChangeTemperatureAsync();
+            fanDiagnosticButton.Click += async (sender, args) => await ShowFanDiagnosticAsync();
+            _refreshTimer.Tick += async (sender, args) => await RefreshAsync();
+            _grid.CellDoubleClick += GridOnCellDoubleClick;
+            Load += async (sender, args) => await LoadWorkspaceAsync();
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                _refreshTimer.Dispose();
+                _workspace.Dispose();
+            }
+            base.Dispose(disposing);
+        }
+
+        private FlowLayoutPanel CreateToolbar(out Button connectButton, out Button disconnectButton, out Button scanButton, out Button refreshButton, out Button powerButton, out Button applyModeButton, out Button applyFanSpeedButton, out Button temperatureButton, out Button fanDiagnosticButton)
+        {
+            var toolbar = new FlowLayoutPanel
+            {
+                Dock = DockStyle.Top,
+                AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                WrapContents = true,
+                FlowDirection = FlowDirection.LeftToRight,
+                Padding = new Padding(8),
+                Margin = Padding.Empty
+            };
+
+            connectButton = CreateButton("连接"); disconnectButton = CreateButton("断开"); scanButton = CreateButton("扫描"); refreshButton = CreateButton("刷新");
+            powerButton = CreateButton("切换开关"); applyModeButton = CreateButton("写入模式"); applyFanSpeedButton = CreateButton("写入风速"); temperatureButton = CreateButton("设温"); fanDiagnosticButton = CreateButton("风机诊断");
+
+            var connectionGroup = CreateToolbarGroup();
+            connectionGroup.Controls.Add(CreateField("串口", _portComboBox));
+            connectionGroup.Controls.Add(CreateField("地址", _startAddress));
+            connectionGroup.Controls.Add(CreateField("至", _endAddress));
+            connectionGroup.Controls.Add(connectButton);
+            connectionGroup.Controls.Add(disconnectButton);
+            connectionGroup.Controls.Add(scanButton);
+            connectionGroup.Controls.Add(refreshButton);
+
+            var controlGroup = CreateToolbarGroup();
+            controlGroup.Controls.Add(powerButton);
+            controlGroup.Controls.Add(temperatureButton);
+            controlGroup.Controls.Add(CreateField("目标模式", _modeComboBox));
+            controlGroup.Controls.Add(applyModeButton);
+            controlGroup.Controls.Add(CreateField("目标风速", _fanSpeedComboBox));
+            controlGroup.Controls.Add(applyFanSpeedButton);
+            controlGroup.Controls.Add(fanDiagnosticButton);
+
+            var statusGroup = CreateToolbarGroup();
+            statusGroup.FlowDirection = FlowDirection.TopDown;
+            statusGroup.WrapContents = false;
+            statusGroup.MinimumSize = new Size(280, 0);
+            statusGroup.Controls.Add(_statusLabel);
+
+            toolbar.Controls.Add(connectionGroup);
+            toolbar.Controls.Add(controlGroup);
+            toolbar.Controls.Add(statusGroup);
+            return toolbar;
+        }
+
+        private static FlowLayoutPanel CreateToolbarGroup()
+        {
+            return new FlowLayoutPanel
+            {
+                AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                WrapContents = false,
+                FlowDirection = FlowDirection.LeftToRight,
+                Margin = new Padding(0, 0, 12, 4),
+                Padding = Padding.Empty
+            };
+        }
+
+        private static FlowLayoutPanel CreateField(string text, Control input)
+        {
+            var field = CreateToolbarGroup();
+            field.Margin = new Padding(0, 0, 8, 0);
+            field.Controls.Add(new Label { Text = text, AutoSize = true, Margin = new Padding(0, 8, 4, 0) });
+            input.Margin = new Padding(0, 2, 0, 2);
+            field.Controls.Add(input);
+            return field;
+        }
+
+        private static Button CreateButton(string text) => new Button { Text = text, AutoSize = true, MinimumSize = new Size(76, 32), Margin = new Padding(6, 2, 6, 2), Padding = new Padding(12, 6, 12, 6) };
+
+        private void BindSelections()
+        {
+            _modeComboBox.DataSource = new[]
+            {
+                new Choice<ThermostatMode>("地暖制热", ThermostatMode.FloorHeating), new Choice<ThermostatMode>("风盘制热", ThermostatMode.FanCoilHeating),
+                new Choice<ThermostatMode>("联合制热", ThermostatMode.CombinedHeating), new Choice<ThermostatMode>("制冷", ThermostatMode.Cooling),
+                new Choice<ThermostatMode>("地板制冷", ThermostatMode.FloorCooling), new Choice<ThermostatMode>("联合制冷", ThermostatMode.CombinedCooling),
+                new Choice<ThermostatMode>("通风", ThermostatMode.Ventilation)
+            };
+            _modeComboBox.DisplayMember = "Text"; _modeComboBox.ValueMember = "Value";
+            _fanSpeedComboBox.DataSource = new[] { new Choice<ThermostatFanSpeedSetting>("低", ThermostatFanSpeedSetting.Low), new Choice<ThermostatFanSpeedSetting>("中", ThermostatFanSpeedSetting.Medium), new Choice<ThermostatFanSpeedSetting>("高", ThermostatFanSpeedSetting.High), new Choice<ThermostatFanSpeedSetting>("自动", ThermostatFanSpeedSetting.Auto) };
+            _fanSpeedComboBox.DisplayMember = "Text"; _fanSpeedComboBox.ValueMember = "Value";
+        }
+
+        private static DataGridView CreateGrid()
+        {
+            var grid = new DataGridView { Dock = DockStyle.Fill, ReadOnly = true, AllowUserToAddRows = false, AllowUserToDeleteRows = false, AutoGenerateColumns = false, SelectionMode = DataGridViewSelectionMode.FullRowSelect, MultiSelect = false, AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill, ColumnHeadersHeight = 36, ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.DisableResizing, RowTemplate = { Height = 30 } };
+            AddColumn(grid, "地址", 56, 55);
+            AddColumn(grid, "名称", 110, 130);
+            AddColumn(grid, "分组", 90, 110);
+            AddColumn(grid, "状态", 60, 70);
+            AddColumn(grid, "室温 (°C)", 78, 80);
+            AddColumn(grid, "设温 (°C)", 78, 80);
+            AddColumn(grid, "开关", 56, 55);
+            AddColumn(grid, "模式", 96, 120);
+            AddColumn(grid, "当前风速", 78, 80);
+            AddColumn(grid, "风速设定", 78, 80);
+            AddColumn(grid, "阀1状态", 66, 70);
+            AddColumn(grid, "更新时间", 88, 100);
+            return grid;
+        }
+
+        private static void AddColumn(DataGridView grid, string header, int minimumWidth, float fillWeight)
+        {
+            grid.Columns.Add(new DataGridViewTextBoxColumn { Name = header, HeaderText = header, MinimumWidth = minimumWidth, FillWeight = fillWeight });
+        }
+
+        private async Task LoadWorkspaceAsync() { var configuration = _configStore.Load(out var warning); _workspace.ApplyConfiguration(configuration); Render(); _statusLabel.Text = string.IsNullOrWhiteSpace(warning) ? "未连接" : warning; await Task.CompletedTask; }
+        private async Task ConnectAsync()
+        {
+            if (string.IsNullOrWhiteSpace(_portComboBox.Text)) { MessageBox.Show(this, "请选择串口。", "温控器"); return; }
+            _statusLabel.Text = "连接中...";
+            var connected = await _workspace.ConnectAsync(new CommSettings { PortName = _portComboBox.Text.Trim(), BaudRate = 9600, DataBits = 8, Parity = "None", StopBits = 1, ReadTimeoutMs = 1000, WriteTimeoutMs = 1000 });
+            _statusLabel.Text = connected ? "已连接 (9600/8N1)" : "连接失败";
+            if (connected) { _refreshTimer.Start(); await RefreshAsync(); }
+        }
+        private async Task DisconnectAsync() { _refreshTimer.Stop(); await _workspace.DisconnectAsync(); _statusLabel.Text = "未连接"; Render(); }
+        private async Task ScanAsync() { if (!EnsureConnected()) return; _statusLabel.Text = "扫描中..."; var found = await _workspace.ScanAsync((byte)_startAddress.Value, (byte)_endAddress.Value); _configStore.Save(_workspace.ExportConfiguration()); _statusLabel.Text = string.Format("扫描完成，发现 {0} 台温控器", found.Count); await RefreshAsync(); }
+        private async Task RefreshAsync()
+        {
+            if (_refreshing || !_workspace.IsConnected) return;
+            _refreshing = true;
+            try { _statusLabel.Text = "刷新中..."; var results = await _workspace.RefreshTelemetryAsync(); var failures = results.Count(result => !result.IsSuccess); _statusLabel.Text = failures == 0 ? "已刷新" : string.Format("已刷新，{0} 台离线", failures); Render(); }
+            catch (Exception ex) { _statusLabel.Text = "刷新失败: " + ex.Message; }
+            finally { _refreshing = false; }
+        }
+        private async Task ChangePowerAsync() { var device = GetSelectedDevice(); if (device == null) return; var target = device.Telemetry != null && device.Telemetry.PowerState == ThermostatPowerState.On ? ThermostatPowerState.Off : ThermostatPowerState.On; await RunControlAsync(() => _workspace.SetPowerAsync(device.Device.SlaveId, target)); }
+        private async Task ApplyModeAsync() { var device = GetSelectedDevice(); if (device == null) return; await RunControlAsync(() => _workspace.SetModeAsync(device.Device.SlaveId, ((Choice<ThermostatMode>)_modeComboBox.SelectedItem).Value)); }
+        private async Task ApplyFanSpeedAsync() { var device = GetSelectedDevice(); if (device == null) return; await RunControlAsync(() => _workspace.SetFanSpeedAsync(device.Device.SlaveId, ((Choice<ThermostatFanSpeedSetting>)_fanSpeedComboBox.SelectedItem).Value)); }
+        private async Task ShowFanDiagnosticAsync()
+        {
+            var device = GetSelectedDevice();
+            if (device == null)
+            {
+                return;
+            }
+
+            try
+            {
+                _statusLabel.Text = "读取风机诊断中...";
+                var diagnostic = await _workspace.DiagnoseFanControlAsync(device.Device.SlaveId);
+                using (var dialog = new ThermostatFanDiagnosticForm(diagnostic))
+                {
+                    dialog.ShowDialog(this);
+                }
+                _statusLabel.Text = diagnostic.Summary;
+            }
+            catch (Exception ex)
+            {
+                _statusLabel.Text = "风机诊断失败: " + ex.Message;
+            }
+        }
+
+        private async Task ChangeTemperatureAsync()
+        {
+            var device = GetSelectedDevice(); if (device == null) return;
+            using (var dialog = new Form { Text = "设置温度", FormBorderStyle = FormBorderStyle.FixedDialog, StartPosition = FormStartPosition.CenterParent, ClientSize = new Size(260, 92), MinimumSize = new Size(276, 130), MaximizeBox = false, MinimizeBox = false, AutoScaleMode = AutoScaleMode.Font, Padding = new Padding(12) })
+            {
+                var layout = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, WrapContents = false, FlowDirection = FlowDirection.LeftToRight };
+                var value = new NumericUpDown { Width = 132, Minimum = 5, Maximum = 35, DecimalPlaces = 1, Increment = 0.1m, Value = device.Telemetry == null ? 26m : device.Telemetry.SetTemperatureCelsius, Margin = new Padding(0, 4, 8, 4) };
+                var ok = new Button { Text = "确定", DialogResult = DialogResult.OK, AutoSize = true, MinimumSize = new Size(68, 32), Margin = new Padding(0, 2, 0, 2), Padding = new Padding(12, 6, 12, 6) };
+                layout.Controls.Add(value); layout.Controls.Add(ok); dialog.Controls.Add(layout); dialog.AcceptButton = ok;
+                if (dialog.ShowDialog(this) == DialogResult.OK) await RunControlAsync(() => _workspace.SetTemperatureAsync(device.Device.SlaveId, value.Value));
+            }
+        }
+        private async Task RunControlAsync(Func<Task<ThermostatTelemetry>> action) { try { _statusLabel.Text = "写入并回读中..."; await action(); _statusLabel.Text = "控制成功"; Render(); } catch (Exception ex) { _statusLabel.Text = "控制失败: " + ex.Message; } }
+        private bool EnsureConnected() { if (_workspace.IsConnected) return true; MessageBox.Show(this, "请先连接温控器串口。", "温控器"); return false; }
+        private ThermostatDeviceSnapshot GetSelectedDevice() { if (!EnsureConnected() || _grid.CurrentRow == null || !(_grid.CurrentRow.Tag is ThermostatDeviceSnapshot device)) { if (_workspace.IsConnected) MessageBox.Show(this, "请选择温控器。", "温控器"); return null; } return device; }
+        private void Render()
+        {
+            byte? selectedAddress = _grid.CurrentRow != null && _grid.CurrentRow.Tag is ThermostatDeviceSnapshot selected ? selected.Device.SlaveId : (byte?)null;
+            _grid.Rows.Clear();
+            foreach (var device in _workspace.CreateSnapshot().Devices)
+            {
+                var t = device.Telemetry;
+                var row = _grid.Rows[_grid.Rows.Add(device.Device.SlaveId, device.Device.Name, device.Device.GroupName, t == null ? "离线" : "在线", t == null ? "" : t.RoomTemperatureCelsius.ToString("0.0"), t == null ? "" : t.SetTemperatureCelsius.ToString("0.0"), t == null ? "" : FormatPower(t.PowerState), t == null ? "" : FormatMode(t.Mode), t == null ? "" : FormatCurrentFanSpeed(t.CurrentFanSpeed), t == null ? "" : FormatFanSpeedSetting(t.FanSpeedSetting), t == null ? "" : FormatValve1State(t.WaterValveOpen), t == null ? "" : t.CollectedAt.ToString("HH:mm:ss"))];
+                row.Tag = device; if (selectedAddress == device.Device.SlaveId) row.Selected = true;
+            }
+        }
+        private void GridOnCellDoubleClick(object sender, DataGridViewCellEventArgs e)
+        {
+            if (e.RowIndex < 0 || e.RowIndex >= _grid.Rows.Count || !(_grid.Rows[e.RowIndex].Tag is ThermostatDeviceSnapshot device))
+            {
+                return;
+            }
+
+            using (var details = new ThermostatDetailsForm(device))
+            {
+                details.ShowDialog(this);
+            }
+        }
+
+        internal static string FormatPower(ThermostatPowerState value) => value == ThermostatPowerState.On ? "开" : value == ThermostatPowerState.Off ? "关" : string.Empty;
+        internal static string FormatMode(ThermostatMode value) { switch (value) { case ThermostatMode.FloorHeating: return "地暖制热"; case ThermostatMode.FanCoilHeating: return "风盘制热"; case ThermostatMode.CombinedHeating: return "联合制热"; case ThermostatMode.Cooling: return "制冷"; case ThermostatMode.FloorCooling: return "地板制冷"; case ThermostatMode.CombinedCooling: return "联合制冷"; case ThermostatMode.Ventilation: return "通风"; default: return string.Empty; } }
+        internal static string FormatCurrentFanSpeed(ThermostatCurrentFanSpeed value) => value == ThermostatCurrentFanSpeed.Low ? "低" : value == ThermostatCurrentFanSpeed.Medium ? "中" : value == ThermostatCurrentFanSpeed.High ? "高" : string.Empty;
+        internal static string FormatFanSpeedSetting(ThermostatFanSpeedSetting value) => value == ThermostatFanSpeedSetting.Low ? "低" : value == ThermostatFanSpeedSetting.Medium ? "中" : value == ThermostatFanSpeedSetting.High ? "高" : value == ThermostatFanSpeedSetting.Auto ? "自动" : string.Empty;
+        internal static string FormatValve1State(bool? value) => !value.HasValue ? string.Empty : value.Value ? "开" : "关";
+        private sealed class Choice<T> { public Choice(string text, T value) { Text = text; Value = value; } public string Text { get; } public T Value { get; } }
+    }
+}

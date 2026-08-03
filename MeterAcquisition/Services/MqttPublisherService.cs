@@ -1,5 +1,6 @@
 using System;
 using System.Configuration;
+using System.Globalization;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -18,6 +19,8 @@ namespace MeterAcquisition
         private readonly string _legacyTopic;
         private readonly bool _publishLegacyTopic;
         private readonly string _registryTopicTemplate;
+        private readonly string _heatPumpTopicTemplate;
+        private readonly string _thermostatTopicTemplate;
         private readonly string _username;
         private readonly string _password;
         private readonly JsonSerializerSettings _jsonSettings;
@@ -28,12 +31,14 @@ namespace MeterAcquisition
         public MqttPublisherService()
         {
             _host = GetAppSetting("MqttHost", "127.0.0.1");
-            _port = int.TryParse(GetAppSetting("MqttPort", "2883"), out var port) ? port : 2883;
+            _port = int.TryParse(GetAppSetting("MqttPort", "1883"), out var port) ? port : 1883;
             _clientId = GetAppSetting("MqttClientId", "meter-acquisition-winform");
             _topicTemplate = GetAppSetting("MqttTopicTemplate", "meter/{site}/{box}/{meter}");
             _legacyTopic = GetAppSetting("MqttLegacyTopic", "meter/data");
             _publishLegacyTopic = bool.TryParse(GetAppSetting("PublishLegacyTopic", "true"), out var publishLegacyTopic) && publishLegacyTopic;
             _registryTopicTemplate = GetAppSetting("MqttRegistryTopicTemplate", "meter/registry/{site}/{box}");
+            _heatPumpTopicTemplate = GetAppSetting("HeatPumpMqttTopicTemplate", "tpem/{site}/heatpump/{controller}/telemetry");
+            _thermostatTopicTemplate = GetAppSetting("ThermostatMqttTopicTemplate", "tpem/{site}/thermostat/{device}/telemetry");
             _username = GetAppSetting("MqttUsername", string.Empty);
             _password = GetAppSetting("MqttPassword", string.Empty);
             _jsonSettings = new JsonSerializerSettings
@@ -72,6 +77,46 @@ namespace MeterAcquisition
             }
         }
 
+        public async Task PublishHeatPumpTelemetryAsync(HeatPumpTelemetryMessage message, CancellationToken cancellationToken = default(CancellationToken))
+        {
+            if (message == null)
+            {
+                return;
+            }
+
+            await _syncLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                await EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
+                var payload = JsonConvert.SerializeObject(message, _jsonSettings);
+                await PublishToTopicAsync(BuildHeatPumpTopic(message), payload, cancellationToken).ConfigureAwait(false);
+            }
+            finally
+            {
+                _syncLock.Release();
+            }
+        }
+
+        public async Task PublishThermostatTelemetryAsync(ThermostatTelemetryMessage message, CancellationToken cancellationToken = default(CancellationToken))
+        {
+            if (message == null)
+            {
+                return;
+            }
+
+            await _syncLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                await EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
+                var payload = JsonConvert.SerializeObject(message, _jsonSettings);
+                await PublishToTopicAsync(BuildThermostatTopic(message), payload, cancellationToken).ConfigureAwait(false);
+            }
+            finally
+            {
+                _syncLock.Release();
+            }
+        }
+
         public async Task PublishRegistryAsync(MeterRegistryMessage message, CancellationToken cancellationToken = default(CancellationToken))
         {
             if (message == null)
@@ -97,10 +142,24 @@ namespace MeterAcquisition
             var mqttMessage = new MqttApplicationMessageBuilder()
                 .WithTopic(topic)
                 .WithPayload(Encoding.UTF8.GetBytes(payload))
-                .WithQualityOfServiceLevel(MQTTnet.Protocol.MqttQualityOfServiceLevel.AtMostOnce)
+                .WithQualityOfServiceLevel(MQTTnet.Protocol.MqttQualityOfServiceLevel.AtLeastOnce)
                 .Build();
 
             await _client.PublishAsync(mqttMessage, cancellationToken).ConfigureAwait(false);
+        }
+
+        private string BuildHeatPumpTopic(HeatPumpTelemetryMessage message)
+        {
+            return _heatPumpTopicTemplate
+                .Replace("{site}", SanitizeTopicSegment(message.SiteCode))
+                .Replace("{controller}", message.ControllerSlaveId.ToString(CultureInfo.InvariantCulture));
+        }
+
+        private string BuildThermostatTopic(ThermostatTelemetryMessage message)
+        {
+            return _thermostatTopicTemplate
+                .Replace("{site}", SanitizeTopicSegment(message.SiteCode))
+                .Replace("{device}", SanitizeTopicSegment(message.DeviceKey));
         }
 
         private string BuildTopic(MeterTelemetryMessage message)

@@ -6,15 +6,15 @@ namespace MeterAcquisition
 {
     public class MeterManager
     {
-        private readonly MeterDataService _toolbarService;
-        private readonly MeterDataService _dashboardService;
+        private readonly IMeterDataReader _toolbarService;
+        private readonly IMeterDataReader _dashboardService;
 
         public event EventHandler DataRefreshed;
 
         public List<DistributionBox> Boxes { get; }
         public List<MeterInfo> AllMeters => Boxes.SelectMany(b => b.Meters).ToList();
 
-        public MeterManager(MeterDataService toolbarService, MeterDataService dashboardService)
+        public MeterManager(IMeterDataReader toolbarService, IMeterDataReader dashboardService)
         {
             _toolbarService = toolbarService;
             _dashboardService = dashboardService;
@@ -41,6 +41,7 @@ namespace MeterAcquisition
                 Name = name,
                 Location = location,
                 SlaveAddress = slaveAddress,
+                DeviceModel = _toolbarService.DeviceModel
             };
             box.Meters.Add(meter);
             return meter;

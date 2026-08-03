@@ -9,13 +9,20 @@ namespace MeterAcquisition
     /// <summary>
     /// 电表数据业务逻辑服务
     /// </summary>
-    public class MeterDataService
+    public class MeterDataService : IMeterDataReader
     {
         private readonly ModbusService _modbusService;
 
         public MeterDataService(ModbusService modbusService) { _modbusService = modbusService; }
 
         public byte SlaveAddress => _modbusService.Config.SlaveAddress;
+
+        public string DeviceModel => "Legacy";
+
+        public bool Probe(byte slaveAddress)
+        {
+            return ReadRealTimeData(slaveAddress) != null;
+        }
 
         #region 实时数据读取
 

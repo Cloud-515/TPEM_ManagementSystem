@@ -148,6 +148,7 @@ namespace MeterAcquisition
             this.btnDiscover = new System.Windows.Forms.Button();
             this.btnDisconnect = new System.Windows.Forms.Button();
             this.btnConnect = new System.Windows.Forms.Button();
+            this.btnMeterProtocol = new System.Windows.Forms.Button();
             this.txtAddr = new System.Windows.Forms.TextBox();
             this.lblAddr = new System.Windows.Forms.Label();
             this.cmbBaud = new System.Windows.Forms.ComboBox();
@@ -394,7 +395,7 @@ namespace MeterAcquisition
             this.btnAddMeter.Text = "新增电表";
             this.btnAddMeter.UseVisualStyleBackColor = true;
             this.btnAddMeter.Click += new System.EventHandler(this.BtnAddBox_Click);
-            // 
+            //
             // lblSecondStatusDashboard
             // 
             this.lblSecondStatusDashboard.AutoSize = true;
@@ -1738,9 +1739,20 @@ namespace MeterAcquisition
             this.btnConnect.Text = "连接";
             this.btnConnect.UseVisualStyleBackColor = true;
             this.btnConnect.Click += new System.EventHandler(this.BtnConnect_Click);
-            // 
+            //
+            // btnMeterProtocol
+            //
+            this.btnMeterProtocol.AutoSize = true;
+            this.btnMeterProtocol.Location = new System.Drawing.Point(0, 0);
+            this.btnMeterProtocol.Name = "btnMeterProtocol";
+            this.btnMeterProtocol.Padding = new System.Windows.Forms.Padding(8, 0, 8, 0);
+            this.btnMeterProtocol.Size = new System.Drawing.Size(130, 29);
+            this.btnMeterProtocol.TabIndex = 9;
+            this.btnMeterProtocol.UseVisualStyleBackColor = true;
+            this.btnMeterProtocol.Click += new System.EventHandler(this.btnMeterProtocol_Click);
+            //
             // txtAddr
-            // 
+            //
             this.txtAddr.Anchor = ((System.Windows.Forms.AnchorStyles)((System.Windows.Forms.AnchorStyles.Left | System.Windows.Forms.AnchorStyles.Right)));
             this.txtAddr.Font = new System.Drawing.Font("微软雅黑", 9.75F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(134)));
             this.txtAddr.Location = new System.Drawing.Point(576, 10);
@@ -1844,7 +1856,7 @@ namespace MeterAcquisition
             // tlpTop
             // 
             this.tlpTop.AutoSize = true;
-            this.tlpTop.ColumnCount = 9;
+            this.tlpTop.ColumnCount = 10;
             this.tlpTop.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle());
             this.tlpTop.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Percent, 33.33333F));
             this.tlpTop.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle());
@@ -1854,6 +1866,7 @@ namespace MeterAcquisition
             this.tlpTop.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle());
             this.tlpTop.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle());
             this.tlpTop.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle());
+            this.tlpTop.Controls.Add(this.btnMeterProtocol, 9, 0);
             this.tlpTop.Controls.Add(this.lblPort, 0, 0);
             this.tlpTop.Controls.Add(this.lblStatus, 0, 1);
             this.tlpTop.Controls.Add(this.btnDiscover, 8, 0);
@@ -2027,6 +2040,7 @@ namespace MeterAcquisition
         private Button btnDiscover;
         private Button btnDisconnect;
         private Button btnConnect;
+        private Button btnMeterProtocol;
         private TextBox txtAddr;
         private Label lblAddr;
         private ComboBox cmbBaud;
@@ -2035,7 +2049,7 @@ namespace MeterAcquisition
         private Label lblPort;
         private ToolStripStatusLabel tslTime;
         private StatusStrip statusStrip;
-        private Timer clockTimer;
+        private System.Windows.Forms.Timer clockTimer;
         private TableLayoutPanel tlpTop;
         private TableLayoutPanel tlpMain;
         private TabPage tabDashboard;

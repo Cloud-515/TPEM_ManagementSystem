@@ -8,6 +8,11 @@ using System.Linq;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 using System.Windows.Forms.DataVisualization.Charting;
+using MeterAcquisition.HeatPump.Application;
+using MeterAcquisition.HeatPump.Domain;
+using MeterAcquisition.HeatPump.Forms;
+using MeterAcquisition.Thermostat.Forms;
+using MeterAcquisition.HeatPump.Services;
 using MeterAcquisition.Properties;
 using ThreadingCancellationToken = System.Threading.CancellationToken;
 
@@ -17,15 +22,20 @@ namespace MeterAcquisition
     {
         private readonly ModbusService _modbusService;
         private readonly ModbusService _modbusService2;
-        private readonly MeterDataService _meterDataService;
-        private readonly MeterDataService _meterDataService2;
-        private readonly MeterManager _meterManager;
-        private readonly Timer _refreshTimer;
+        private IMeterDataReader _meterDataService;
+        private IMeterDataReader _meterDataService2;
+        private MeterDataService _legacyMeterDataService;
+        private MeterManager _meterManager;
+        private string _meterProtocol;
+        private CommunicationConfig _meterCommunicationConfig;
+        private readonly System.Windows.Forms.Timer _refreshTimer;
         private readonly MqttPublisherService _mqttPublisherService;
         private readonly string _siteCode;
         private readonly string _toolbarBoxCode;
         private readonly string _dashboardBoxCode;
         private readonly Dictionary<string, MeterDetailsForm> _detailForms = new Dictionary<string, MeterDetailsForm>();
+        private TabPage _tabMeterOverview;
+        private MeterOverviewControl _meterOverview;
         private bool _isRefreshing = false;
         private int _refreshTickCount;
         private readonly int _realTimeIntervalSeconds;
@@ -61,19 +71,66 @@ namespace MeterAcquisition
         private bool _mqttPublishErrorActive;
         private bool _mqttPublishErrorShown;
         private FlowLayoutPanel _flpBoxContainer;
+        private readonly HeatPumpWorkspaceService _heatPumpWorkspaceService;
+        private readonly HeatPumpWorkspaceConfigStore _heatPumpConfigStore = new HeatPumpWorkspaceConfigStore();
+        private readonly HashSet<string> _selectedHeatPumpModuleKeys = new HashSet<string>(StringComparer.Ordinal);
+        private readonly ToolTip _heatPumpToolTip = new ToolTip();
+        private readonly System.Windows.Forms.Timer _heatPumpRefreshTimer;
+        private bool _isHeatPumpScanning;
+        private bool _isHeatPumpRefreshing;
+        private string _pendingHeatPumpConfigurationWarning = string.Empty;
+        private readonly int _heatPumpRefreshIntervalSeconds;
+        private TabPage _tabLineController;
+        private TabPage _tabHeatPumpAnalysis;
+        private HeatPumpMonitorControl _heatPumpAnalysisControl;
+        private TabPage _tabThermostat;
+        private ThermostatMonitorControl _thermostatMonitorControl;
+        private ComboBox _cmbHeatPumpPort;
+        private ComboBox _cmbHeatPumpBaud;
+        private ComboBox _cmbHeatPumpParity;
+        private ComboBox _cmbHeatPumpStopBits;
+        private NumericUpDown _nudHeatPumpScanStart;
+        private NumericUpDown _nudHeatPumpScanEnd;
+        private Button _btnHeatPumpConnect;
+        private Button _btnHeatPumpDisconnect;
+        private Button _btnHeatPumpScan;
+        private Label _lblLineControllerConnectionValue;
+        private Label _lblHeatPumpSelectionSummary;
+        private Label _lblLineControllerControllerCountValue;
+        private Label _lblLineControllerModuleCountValue;
+        private Label _lblLineControllerRefreshValue;
+        private FlowLayoutPanel _flpLineControllerCards;
+        private Label _lblLineControllerPageStatus;
 
         public MainForm()
         {
             InitializeComponent();
+            InitializeMeterOverviewTab();
+            InitializeLineControllerTab();
             _modbusService = new ModbusService();
             _modbusService2 = new ModbusService();
-            _meterDataService = new MeterDataService(_modbusService);
-            _meterDataService2 = new MeterDataService(_modbusService2);
+            _meterProtocol = GetMeterProtocol();
+            _meterCommunicationConfig = GetMeterCommunicationConfig(_meterProtocol);
+            ApplyMeterCommunicationConfig(_modbusService, _meterCommunicationConfig);
+            ApplyMeterCommunicationConfig(_modbusService2, _meterCommunicationConfig);
+            _heatPumpRefreshIntervalSeconds = GetPositiveIntAppSetting("HeatPumpRefreshIntervalSeconds", 10);
+            _heatPumpWorkspaceService = new HeatPumpWorkspaceService();
+            _heatPumpRefreshTimer = new System.Windows.Forms.Timer
+            {
+                Interval = _heatPumpRefreshIntervalSeconds * 1000
+            };
+            _heatPumpRefreshTimer.Tick += HeatPumpRefreshTimer_Tick;
+            LoadHeatPumpWorkspaceConfiguration();
+            _legacyMeterDataService = new MeterDataService(_modbusService);
+            _meterDataService = CreateMeterDataReader(_modbusService);
+            _meterDataService2 = CreateMeterDataReader(_modbusService2);
+            UpdateMeterProtocolButton();
+            RefreshLineControllerPage();
             _modbusService.ConnectionStateChanged += OnConnectionStateChanged;
             _modbusService.CommunicationError += OnCommunicationError;
             _modbusService2.ConnectionStateChanged += OnSecondConnectionStateChanged;
             _modbusService2.CommunicationError += OnSecondCommunicationError;
-            _refreshTimer = new Timer { Interval = 1000 };
+            _refreshTimer = new System.Windows.Forms.Timer { Interval = 1000 };
             _refreshTimer.Tick += RefreshTimer_Tick;
             _mqttPublisherService = new MqttPublisherService();
             _siteCode = ConfigurationManager.AppSettings["SiteCode"] ?? "SITE-001";
@@ -113,6 +170,1108 @@ namespace MeterAcquisition
         {
             ResizeDashboardPanels();
             await EnsureQueryModuleLoadedAsync(false).ConfigureAwait(true);
+        }
+
+        private void InitializeMeterOverviewTab()
+        {
+            _tabMeterOverview = new TabPage
+            {
+                Name = "tabMeterOverview",
+                Text = "电表总览",
+                Padding = new Padding(4),
+                UseVisualStyleBackColor = true
+            };
+
+            _meterOverview = new MeterOverviewControl(GetMeterDisplayStatus);
+            _meterOverview.MeterSelected += MeterOverview_MeterSelected;
+            _tabMeterOverview.Controls.Add(_meterOverview);
+
+            var dashboardIndex = tabControlMain.TabPages.IndexOf(tabDashboard);
+            tabControlMain.TabPages.Insert(dashboardIndex >= 0 ? dashboardIndex + 1 : tabControlMain.TabPages.Count, _tabMeterOverview);
+        }
+
+        private void MeterOverview_MeterSelected(object sender, MeterSelectedEventArgs e)
+        {
+            ShowMeterDetails(e.MeterId);
+        }
+
+        private void InitializeLineControllerTab()
+        {
+            _tabLineController = new TabPage
+            {
+                Name = "tabLineController",
+                Text = "线控器数据",
+                Padding = new Padding(4),
+                UseVisualStyleBackColor = true
+            };
+
+            var root = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                ColumnCount = 1,
+                RowCount = 5,
+                Padding = new Padding(12)
+            };
+            root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            root.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+            root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+
+            var connectionBar = CreateHeatPumpConnectionBar();
+            var groupControlBar = CreateHeatPumpGroupControlBar();
+            var summary = new TableLayoutPanel
+            {
+                Dock = DockStyle.Top,
+                ColumnCount = 4,
+                AutoSize = true,
+                Margin = new Padding(0, 0, 0, 12)
+            };
+            summary.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 25F));
+            summary.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 25F));
+            summary.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 25F));
+            summary.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 25F));
+
+            _lblLineControllerConnectionValue = AddSummaryCard(summary, 0, "连接状态", "未连接");
+            _lblLineControllerControllerCountValue = AddSummaryCard(summary, 1, "控制器数量", "0");
+            _lblLineControllerModuleCountValue = AddSummaryCard(summary, 2, "模块数量", "0");
+            _lblLineControllerRefreshValue = AddSummaryCard(summary, 3, "最近刷新", "--");
+
+            _flpLineControllerCards = new FlowLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                AutoScroll = true,
+                FlowDirection = FlowDirection.TopDown,
+                WrapContents = false,
+                Padding = new Padding(0),
+                Margin = new Padding(0)
+            };
+
+            _lblLineControllerPageStatus = new Label
+            {
+                Text = string.IsNullOrWhiteSpace(_pendingHeatPumpConfigurationWarning)
+                    ? "请选择热泵独立串口并连接后扫描线控器。"
+                    : _pendingHeatPumpConfigurationWarning,
+                Dock = DockStyle.Fill,
+                AutoSize = true,
+                ForeColor = Color.DimGray,
+                Margin = new Padding(0, 12, 0, 0)
+            };
+
+            root.Controls.Add(connectionBar, 0, 0);
+            root.Controls.Add(groupControlBar, 0, 1);
+            root.Controls.Add(summary, 0, 2);
+            root.Controls.Add(_flpLineControllerCards, 0, 3);
+            root.Controls.Add(_lblLineControllerPageStatus, 0, 4);
+
+            _tabLineController.Controls.Add(root);
+            tabControlMain.TabPages.Add(_tabLineController);
+
+            _heatPumpAnalysisControl = new HeatPumpMonitorControl();
+            _tabHeatPumpAnalysis = new TabPage
+            {
+                Name = "tabHeatPumpAnalysis",
+                Text = "线控器历史分析",
+                Padding = new Padding(4),
+                UseVisualStyleBackColor = true
+            };
+            _tabHeatPumpAnalysis.Controls.Add(_heatPumpAnalysisControl);
+            tabControlMain.TabPages.Add(_tabHeatPumpAnalysis);
+
+            _thermostatMonitorControl = new ThermostatMonitorControl();
+            _tabThermostat = new TabPage
+            {
+                Name = "tabThermostat",
+                Text = "温控器",
+                Padding = new Padding(4),
+                UseVisualStyleBackColor = true
+            };
+            _tabThermostat.Controls.Add(_thermostatMonitorControl);
+            tabControlMain.TabPages.Add(_tabThermostat);
+        }
+
+        private Control CreateHeatPumpConnectionBar()
+        {
+            var bar = new FlowLayoutPanel
+            {
+                Dock = DockStyle.Top,
+                AutoSize = true,
+                WrapContents = true,
+                Margin = new Padding(0, 0, 0, 12),
+                Padding = new Padding(0)
+            };
+
+            _cmbHeatPumpPort = CreateHeatPumpComboBox(120);
+            _cmbHeatPumpBaud = CreateHeatPumpComboBox(90, new[] { "4800", "9600", "19200", "38400", "57600", "115200" });
+            _cmbHeatPumpParity = CreateHeatPumpComboBox(80, new[] { "None", "Even", "Odd" });
+            _cmbHeatPumpStopBits = CreateHeatPumpComboBox(60, new[] { "1", "2" });
+            _nudHeatPumpScanStart = CreateHeatPumpAddressInput();
+            _nudHeatPumpScanEnd = CreateHeatPumpAddressInput();
+            _btnHeatPumpConnect = new Button { Text = "连接热泵", AutoSize = true, Margin = new Padding(12, 4, 0, 4) };
+            _btnHeatPumpDisconnect = new Button { Text = "断开热泵", AutoSize = true, Enabled = false, Margin = new Padding(4) };
+            _btnHeatPumpScan = new Button { Text = "扫描线控器", AutoSize = true, Enabled = false, Margin = new Padding(4) };
+
+            RefreshHeatPumpPorts(false);
+            LoadHeatPumpSettings();
+            _cmbHeatPumpPort.DropDown += (sender, e) => RefreshHeatPumpPorts(true);
+            _btnHeatPumpConnect.Click += async (sender, e) => await ConnectHeatPumpAsync();
+            _btnHeatPumpDisconnect.Click += async (sender, e) => await DisconnectHeatPumpAsync();
+            _btnHeatPumpScan.Click += async (sender, e) => await ScanHeatPumpControllersAsync();
+
+            AddHeatPumpField(bar, "端口", _cmbHeatPumpPort);
+            AddHeatPumpField(bar, "波特率", _cmbHeatPumpBaud);
+            AddHeatPumpField(bar, "校验", _cmbHeatPumpParity);
+            AddHeatPumpField(bar, "停止位", _cmbHeatPumpStopBits);
+            AddHeatPumpField(bar, "起始站号", _nudHeatPumpScanStart);
+            AddHeatPumpField(bar, "结束站号", _nudHeatPumpScanEnd);
+            bar.Controls.Add(_btnHeatPumpConnect);
+            bar.Controls.Add(_btnHeatPumpDisconnect);
+            bar.Controls.Add(_btnHeatPumpScan);
+            return bar;
+        }
+
+        private static ComboBox CreateHeatPumpComboBox(int width, IEnumerable<string> values = null)
+        {
+            var comboBox = new ComboBox
+            {
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                Width = width,
+                Margin = new Padding(4)
+            };
+
+            if (values != null)
+            {
+                comboBox.Items.AddRange(values.Cast<object>().ToArray());
+            }
+
+            return comboBox;
+        }
+
+        private static NumericUpDown CreateHeatPumpAddressInput()
+        {
+            return new NumericUpDown
+            {
+                Minimum = 1,
+                Maximum = 247,
+                Width = 64,
+                Margin = new Padding(4)
+            };
+        }
+
+        private static void AddHeatPumpField(FlowLayoutPanel bar, string title, Control control)
+        {
+            var field = new FlowLayoutPanel
+            {
+                AutoSize = true,
+                WrapContents = false,
+                Margin = new Padding(0, 0, 8, 0),
+                Padding = new Padding(0)
+            };
+            field.Controls.Add(new Label { Text = title, AutoSize = true, Margin = new Padding(0, 8, 2, 0) });
+            field.Controls.Add(control);
+            bar.Controls.Add(field);
+        }
+
+        private void RefreshHeatPumpPorts(bool preserveSelection)
+        {
+            var ports = SerialPort.GetPortNames().OrderBy(port => port, StringComparer.OrdinalIgnoreCase).ToArray();
+            var previousSelection = preserveSelection ? _cmbHeatPumpPort.SelectedItem as string : null;
+            _cmbHeatPumpPort.BeginUpdate();
+            try
+            {
+                _cmbHeatPumpPort.Items.Clear();
+                _cmbHeatPumpPort.Items.AddRange(ports);
+                if (!string.IsNullOrWhiteSpace(previousSelection) && ports.Contains(previousSelection, StringComparer.OrdinalIgnoreCase))
+                {
+                    _cmbHeatPumpPort.SelectedItem = ports.First(port => string.Equals(port, previousSelection, StringComparison.OrdinalIgnoreCase));
+                }
+            }
+            finally
+            {
+                _cmbHeatPumpPort.EndUpdate();
+            }
+        }
+
+        private void LoadHeatPumpSettings()
+        {
+            var defaults = new CommSettings
+            {
+                PortName = ConfigurationManager.AppSettings["HeatPumpPortName"] ?? string.Empty,
+                BaudRate = GetPositiveIntAppSetting("HeatPumpBaudRate", 9600),
+                DataBits = GetPositiveIntAppSetting("HeatPumpDataBits", 8),
+                Parity = ConfigurationManager.AppSettings["HeatPumpParity"] ?? "None",
+                StopBits = GetPositiveIntAppSetting("HeatPumpStopBits", 1),
+                ReadTimeoutMs = GetPositiveIntAppSetting("HeatPumpReadTimeoutMs", 1000),
+                WriteTimeoutMs = GetPositiveIntAppSetting("HeatPumpWriteTimeoutMs", 1000)
+            };
+            var settings = Settings.Default;
+            var portName = string.IsNullOrWhiteSpace(settings.HeatPumpPortName) ? defaults.PortName : settings.HeatPumpPortName;
+            SelectHeatPumpComboValue(_cmbHeatPumpPort, portName);
+            SelectHeatPumpComboValue(_cmbHeatPumpBaud, settings.HeatPumpBaudRate > 0 ? settings.HeatPumpBaudRate.ToString(CultureInfo.InvariantCulture) : defaults.BaudRate.ToString(CultureInfo.InvariantCulture));
+            SelectHeatPumpComboValue(_cmbHeatPumpParity, string.IsNullOrWhiteSpace(settings.HeatPumpParity) ? defaults.Parity : settings.HeatPumpParity);
+            SelectHeatPumpComboValue(_cmbHeatPumpStopBits, (settings.HeatPumpStopBits == 1 || settings.HeatPumpStopBits == 2 ? settings.HeatPumpStopBits : defaults.StopBits).ToString(CultureInfo.InvariantCulture));
+            _nudHeatPumpScanStart.Value = ClampHeatPumpAddress(settings.HeatPumpScanStartAddress > 0 ? settings.HeatPumpScanStartAddress : GetHeatPumpScanAddress("HeatPumpScanStartAddress", 1));
+            _nudHeatPumpScanEnd.Value = ClampHeatPumpAddress(settings.HeatPumpScanEndAddress > 0 ? settings.HeatPumpScanEndAddress : GetHeatPumpScanAddress("HeatPumpScanEndAddress", 16));
+        }
+
+        private static void SelectHeatPumpComboValue(ComboBox comboBox, string value)
+        {
+            var index = comboBox.FindStringExact(value ?? string.Empty);
+            if (index >= 0)
+            {
+                comboBox.SelectedIndex = index;
+            }
+        }
+
+        private static decimal ClampHeatPumpAddress(int address)
+        {
+            return Math.Max(1, Math.Min(247, address));
+        }
+
+        private Control CreateHeatPumpGroupControlBar()
+        {
+            var panel = new FlowLayoutPanel
+            {
+                Dock = DockStyle.Top,
+                AutoSize = true,
+                WrapContents = true,
+                Margin = new Padding(0, 0, 0, 12),
+                Padding = new Padding(8),
+                BackColor = Color.FromArgb(246, 248, 250)
+            };
+
+            _lblHeatPumpSelectionSummary = new Label
+            {
+                AutoSize = true,
+                Text = "已选择 0 个模块 / 0 个控制器",
+                Margin = new Padding(0, 8, 12, 0)
+            };
+            var runMode = new ComboBox
+            {
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                Width = 84,
+                Enabled = false,
+                Margin = new Padding(4)
+            };
+            runMode.Items.AddRange(new object[] { "制热", "制冷", "自动" });
+            var targetTemperature = new NumericUpDown
+            {
+                Minimum = 5,
+                Maximum = 60,
+                DecimalPlaces = 1,
+                Increment = 0.5M,
+                Width = 70,
+                Enabled = false,
+                Margin = new Padding(4)
+            };
+            var applyButton = new Button { Text = "应用控制", AutoSize = true, Enabled = false, Margin = new Padding(8, 4, 4, 4) };
+            var clearFaultButton = new Button { Text = "清故障", AutoSize = true, Enabled = false, Margin = new Padding(4) };
+            const string writeDisabledReason = "控制写入尚未启用：待确认设备寄存器语义、运行联锁和现场操作流程。";
+            foreach (Control control in new Control[] { runMode, targetTemperature, applyButton, clearFaultButton })
+            {
+                _heatPumpToolTip.SetToolTip(control, writeDisabledReason);
+            }
+
+            panel.Controls.Add(_lblHeatPumpSelectionSummary);
+            AddHeatPumpField(panel, "运行模式", runMode);
+            AddHeatPumpField(panel, "目标温度", targetTemperature);
+            panel.Controls.Add(applyButton);
+            panel.Controls.Add(clearFaultButton);
+            panel.Controls.Add(new Label
+            {
+                AutoSize = true,
+                Text = writeDisabledReason,
+                ForeColor = Color.DimGray,
+                Margin = new Padding(8, 8, 0, 0)
+            });
+            return panel;
+        }
+
+        private static Label AddSummaryCard(TableLayoutPanel summary, int columnIndex, string title, string initialValue)
+        {
+            var card = new Panel
+            {
+                Dock = DockStyle.Fill,
+                BackColor = Color.White,
+                BorderStyle = BorderStyle.FixedSingle,
+                Margin = new Padding(columnIndex == 0 ? 0 : 8, 0, 0, 0),
+                Padding = new Padding(12),
+                Height = 84
+            };
+
+            var titleLabel = new Label
+            {
+                Text = title,
+                Dock = DockStyle.Top,
+                AutoSize = false,
+                Height = 24,
+                ForeColor = Color.DimGray
+            };
+
+            var valueLabel = new Label
+            {
+                Text = initialValue,
+                Dock = DockStyle.Fill,
+                Font = new Font("微软雅黑", 16F, FontStyle.Bold, GraphicsUnit.Point, 134),
+                ForeColor = Color.FromArgb(32, 64, 96),
+                TextAlign = ContentAlignment.MiddleLeft
+            };
+
+            card.Controls.Add(valueLabel);
+            card.Controls.Add(titleLabel);
+            summary.Controls.Add(card, columnIndex, 0);
+            return valueLabel;
+        }
+
+        private void RefreshLineControllerPage()
+        {
+            var snapshot = _heatPumpWorkspaceService.CreateSnapshot();
+            var availableModuleKeys = new HashSet<string>(
+                snapshot.Controllers.SelectMany(controller => controller.Modules).Select(GetHeatPumpModuleKey),
+                StringComparer.Ordinal);
+            _selectedHeatPumpModuleKeys.RemoveWhere(key => !availableModuleKeys.Contains(key));
+            _selectedHeatPumpModuleKeys.RemoveWhere(key => snapshot.Controllers
+                .SelectMany(controller => controller.Modules)
+                .Any(module => GetHeatPumpModuleKey(module) == key && !module.IsEnabled));
+            UpdateHeatPumpSelectionSummary(snapshot);
+            _lblLineControllerConnectionValue.Text = string.IsNullOrWhiteSpace(snapshot.ConnectionDescription)
+                ? "未连接"
+                : snapshot.ConnectionDescription;
+            _lblLineControllerControllerCountValue.Text = snapshot.ControllerCount.ToString(CultureInfo.InvariantCulture);
+            _lblLineControllerModuleCountValue.Text = snapshot.ModuleCount.ToString(CultureInfo.InvariantCulture);
+            _lblLineControllerRefreshValue.Text = snapshot.LastRefreshAt?.ToString("HH:mm:ss", CultureInfo.InvariantCulture) ?? "--";
+
+            var groups = BuildLineControllerGroups(snapshot);
+            RenderLineControllerGroups(groups);
+            _lblLineControllerPageStatus.Text = groups.Count == 0
+                ? "当前未扫描到线控器控制器或模块。"
+                : "当前卡片数据来自 HeatPumpWorkspaceService 实时快照。";
+        }
+
+        private async Task ConnectHeatPumpAsync()
+        {
+            if (!TryBuildHeatPumpSettings(out var settings, out var error))
+            {
+                MessageBox.Show(error, "热泵通信参数", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            SetHeatPumpControlsEnabled(false);
+            _lblLineControllerPageStatus.Text = "正在连接热泵独立串口...";
+            try
+            {
+                var connected = await _heatPumpWorkspaceService.ConnectAsync(settings);
+                if (!connected)
+                {
+                    _lblLineControllerPageStatus.Text = "热泵串口连接失败，请检查端口和通信参数。";
+                    RefreshLineControllerPage();
+                    return;
+                }
+
+                SaveHeatPumpSettings(settings);
+                _heatPumpRefreshTimer.Start();
+                RefreshLineControllerPage();
+                _lblLineControllerPageStatus.Text = "热泵独立串口已连接，请扫描线控器。";
+            }
+            catch (Exception ex)
+            {
+                _lblLineControllerPageStatus.Text = "热泵串口连接失败: " + ex.Message;
+            }
+            finally
+            {
+                UpdateHeatPumpControlState();
+            }
+        }
+
+        private async Task DisconnectHeatPumpAsync()
+        {
+            _heatPumpRefreshTimer.Stop();
+            SetHeatPumpControlsEnabled(false);
+            try
+            {
+                await _heatPumpWorkspaceService.DisconnectAsync();
+                RefreshLineControllerPage();
+                _lblLineControllerPageStatus.Text = "热泵独立串口已断开。";
+            }
+            catch (Exception ex)
+            {
+                _lblLineControllerPageStatus.Text = "热泵串口断开失败: " + ex.Message;
+            }
+            finally
+            {
+                UpdateHeatPumpControlState();
+            }
+        }
+
+        private async Task ScanHeatPumpControllersAsync()
+        {
+            if (_isHeatPumpScanning || !_heatPumpWorkspaceService.IsConnected)
+            {
+                return;
+            }
+
+            _isHeatPumpScanning = true;
+            _btnHeatPumpScan.Enabled = false;
+            _lblLineControllerPageStatus.Text = "正在扫描热泵线控器和模块...";
+            try
+            {
+                await _heatPumpWorkspaceService.ScanControllersAsync();
+                var controllers = _heatPumpWorkspaceService.CreateSnapshot().Controllers;
+                await _heatPumpWorkspaceService.ScanModulesAsync(controllers);
+                SaveHeatPumpWorkspaceConfiguration();
+                RefreshLineControllerPage();
+                _lblLineControllerPageStatus.Text = controllers.Count == 0
+                    ? "未扫描到热泵线控器，请核对站号范围和通信参数。"
+                    : "热泵线控器扫描完成。";
+            }
+            catch (Exception ex)
+            {
+                _lblLineControllerPageStatus.Text = "热泵线控器扫描失败: " + ex.Message;
+            }
+            finally
+            {
+                _isHeatPumpScanning = false;
+                UpdateHeatPumpControlState();
+            }
+        }
+
+        private async void HeatPumpRefreshTimer_Tick(object sender, EventArgs e)
+        {
+            await RefreshHeatPumpTelemetryAsync();
+        }
+
+        private async Task RefreshHeatPumpTelemetryAsync()
+        {
+            if (_isHeatPumpRefreshing || _isHeatPumpScanning || !_heatPumpWorkspaceService.IsConnected)
+            {
+                return;
+            }
+
+            var controllers = _heatPumpWorkspaceService.CreateSnapshot().Controllers;
+            if (controllers.Count == 0)
+            {
+                return;
+            }
+
+            _isHeatPumpRefreshing = true;
+            try
+            {
+                var refreshResults = await _heatPumpWorkspaceService.RefreshTelemetryAsync(controllers);
+                await PublishHeatPumpTelemetryAsync(refreshResults);
+                RefreshLineControllerPage();
+
+                var failedCount = refreshResults.Count(result => !result.IsSuccess);
+                if (failedCount > 0)
+                {
+                    _lblLineControllerPageStatus.Text = string.Format(
+                        CultureInfo.InvariantCulture,
+                        "热泵遥测刷新完成，{0} 个模块读取失败。",
+                        failedCount);
+                }
+            }
+            catch (Exception ex)
+            {
+                _lblLineControllerPageStatus.Text = "热泵遥测刷新失败: " + ex.Message;
+            }
+            finally
+            {
+                _isHeatPumpRefreshing = false;
+            }
+        }
+
+        private async Task PublishHeatPumpTelemetryAsync(IEnumerable<HeatPumpTelemetryRefreshResult> refreshResults)
+        {
+            if (_mqttPublisherService == null || refreshResults == null)
+            {
+                return;
+            }
+
+            var siteCode = ConfigurationManager.AppSettings["SiteCode"] ?? string.Empty;
+            foreach (var result in refreshResults.Where(item => item.IsSuccess))
+            {
+                var module = result.Module;
+                var telemetry = module.Telemetry;
+                try
+                {
+                    await _mqttPublisherService.PublishHeatPumpTelemetryAsync(new HeatPumpTelemetryMessage
+                    {
+                        MessageId = Guid.NewGuid(),
+                        SiteCode = siteCode,
+                        ControllerSlaveId = module.SlaveId,
+                        ModuleIndex = module.ModuleIndex,
+                        ModuleName = module.Name,
+                        GroupName = module.GroupName,
+                        CollectedAt = new DateTimeOffset(DateTime.SpecifyKind(telemetry.LastUpdatedAt, DateTimeKind.Local)).ToUniversalTime(),
+                        IsEnabled = module.IsEnabled,
+                        RunMode = (int)telemetry.RunMode,
+                        Status = (int)telemetry.Status,
+                        OutletWaterTemperature = telemetry.OutletWaterTemperature,
+                        ReturnWaterTemperature = telemetry.ReturnWaterTemperature,
+                        TargetTemperature = telemetry.TargetTemperature,
+                        AmbientTemperature = telemetry.AmbientTemperature,
+                        CompressorOn = telemetry.CompressorOn,
+                        PumpOn = telemetry.PumpOn,
+                        ElectricHeaterOn = telemetry.ElectricHeaterOn,
+                        FaultCode = string.Empty
+                    });
+                }
+                catch (Exception ex)
+                {
+                    _lblLineControllerPageStatus.Text = "热泵 MQTT 发布失败: " + ex.Message;
+                }
+            }
+        }
+
+        private bool TryBuildHeatPumpSettings(out CommSettings settings, out string error)
+        {
+            settings = null;
+            error = string.Empty;
+            var portName = _cmbHeatPumpPort.SelectedItem as string;
+            if (string.IsNullOrWhiteSpace(portName))
+            {
+                error = "请选择热泵独立串口。";
+                return false;
+            }
+
+            if (!SerialPort.GetPortNames().Any(port => string.Equals(port, portName, StringComparison.OrdinalIgnoreCase)))
+            {
+                error = "所选热泵串口当前不可用。";
+                return false;
+            }
+
+            if (!int.TryParse(_cmbHeatPumpBaud.SelectedItem as string, out var baudRate) ||
+                !int.TryParse(_cmbHeatPumpStopBits.SelectedItem as string, out var stopBits))
+            {
+                error = "热泵波特率或停止位无效。";
+                return false;
+            }
+
+            var scanStart = decimal.ToInt32(_nudHeatPumpScanStart.Value);
+            var scanEnd = decimal.ToInt32(_nudHeatPumpScanEnd.Value);
+            if (scanStart > scanEnd)
+            {
+                error = "热泵扫描起始站号不能大于结束站号。";
+                return false;
+            }
+
+            settings = new CommSettings
+            {
+                PortName = portName,
+                BaudRate = baudRate,
+                DataBits = GetPositiveIntAppSetting("HeatPumpDataBits", 8),
+                Parity = _cmbHeatPumpParity.SelectedItem as string ?? "None",
+                StopBits = stopBits,
+                ReadTimeoutMs = GetPositiveIntAppSetting("HeatPumpReadTimeoutMs", 1000),
+                WriteTimeoutMs = GetPositiveIntAppSetting("HeatPumpWriteTimeoutMs", 1000),
+                SlaveAddress = (byte)scanStart,
+                ControllerScanStartAddress = (byte)scanStart,
+                ControllerScanEndAddress = (byte)scanEnd
+            };
+            return true;
+        }
+
+        private void LoadHeatPumpWorkspaceConfiguration()
+        {
+            var configuration = _heatPumpConfigStore.Load(out var warning);
+            _heatPumpWorkspaceService.ApplyConfiguration(configuration);
+            foreach (var key in configuration.SelectedModuleKeys)
+            {
+                _selectedHeatPumpModuleKeys.Add(key);
+            }
+
+            if (!string.IsNullOrWhiteSpace(warning))
+            {
+                _pendingHeatPumpConfigurationWarning = warning;
+            }
+        }
+
+        private void SaveHeatPumpWorkspaceConfiguration()
+        {
+            _heatPumpConfigStore.Save(_heatPumpWorkspaceService.ExportConfiguration(_selectedHeatPumpModuleKeys));
+        }
+
+        private void SaveHeatPumpSettings(CommSettings settings)
+        {
+            var userSettings = Settings.Default;
+            userSettings.HeatPumpPortName = settings.PortName;
+            userSettings.HeatPumpBaudRate = settings.BaudRate;
+            userSettings.HeatPumpDataBits = settings.DataBits;
+            userSettings.HeatPumpParity = settings.Parity;
+            userSettings.HeatPumpStopBits = settings.StopBits;
+            userSettings.HeatPumpReadTimeoutMs = settings.ReadTimeoutMs;
+            userSettings.HeatPumpWriteTimeoutMs = settings.WriteTimeoutMs;
+            userSettings.HeatPumpScanStartAddress = decimal.ToInt32(_nudHeatPumpScanStart.Value);
+            userSettings.HeatPumpScanEndAddress = decimal.ToInt32(_nudHeatPumpScanEnd.Value);
+            userSettings.Save();
+        }
+
+        private void SetHeatPumpControlsEnabled(bool enabled)
+        {
+            _cmbHeatPumpPort.Enabled = enabled;
+            _cmbHeatPumpBaud.Enabled = enabled;
+            _cmbHeatPumpParity.Enabled = enabled;
+            _cmbHeatPumpStopBits.Enabled = enabled;
+            _nudHeatPumpScanStart.Enabled = enabled;
+            _nudHeatPumpScanEnd.Enabled = enabled;
+            _btnHeatPumpConnect.Enabled = enabled;
+            _btnHeatPumpDisconnect.Enabled = enabled;
+            _btnHeatPumpScan.Enabled = enabled;
+        }
+
+        private void UpdateHeatPumpControlState()
+        {
+            var connected = _heatPumpWorkspaceService.IsConnected;
+            _cmbHeatPumpPort.Enabled = !connected;
+            _cmbHeatPumpBaud.Enabled = !connected;
+            _cmbHeatPumpParity.Enabled = !connected;
+            _cmbHeatPumpStopBits.Enabled = !connected;
+            _nudHeatPumpScanStart.Enabled = !connected;
+            _nudHeatPumpScanEnd.Enabled = !connected;
+            _btnHeatPumpConnect.Enabled = !connected;
+            _btnHeatPumpDisconnect.Enabled = connected;
+            _btnHeatPumpScan.Enabled = connected && !_isHeatPumpScanning;
+        }
+
+        private List<LineControllerGroupViewModel> BuildLineControllerGroups(HeatPumpWorkspaceSnapshot snapshot)
+        {
+            var groups = new List<LineControllerGroupViewModel>();
+            foreach (var controller in snapshot.Controllers)
+            {
+                if (controller.Modules.Count == 0)
+                {
+                    groups.Add(new LineControllerGroupViewModel(BuildControllerTitle(controller), string.Empty, controller, BuildControllerCards(controller)));
+                    continue;
+                }
+
+                foreach (var moduleGroup in controller.Modules
+                    .OrderBy(module => module.DisplayOrder)
+                    .ThenBy(module => module.ModuleIndex)
+                    .GroupBy(module => string.IsNullOrWhiteSpace(module.GroupName) ? "未分组" : module.GroupName))
+                {
+                    groups.Add(new LineControllerGroupViewModel(
+                        BuildControllerTitle(controller),
+                        moduleGroup.Key,
+                        controller,
+                        moduleGroup.Select(module => BuildModuleCard(controller, module)).ToList()));
+                }
+            }
+
+            return groups;
+        }
+
+        private List<LineControllerCardViewModel> BuildControllerCards(WiredControllerInfo controller)
+        {
+            if (controller.Modules.Count == 0)
+            {
+                return new List<LineControllerCardViewModel>
+                {
+                    new LineControllerCardViewModel(
+                        "未发现模块",
+                        $"控制器 {controller.Name}",
+                        null,
+                        new List<string>
+                        {
+                            $"控制器从站 {controller.SlaveId}",
+                            $"在线状态 {(controller.IsOnline ? "在线" : "离线")}",
+                            $"锁定状态 {(controller.ControllerLockEnabled ? "已锁定" : "未锁定")}",
+                            $"回差 {controller.Differential} °C"
+                        })
+                };
+            }
+
+            return controller.Modules
+                .OrderBy(module => module.DisplayOrder)
+                .ThenBy(module => module.ModuleIndex)
+                .Select(module => BuildModuleCard(controller, module))
+                .ToList();
+        }
+
+        private LineControllerCardViewModel BuildModuleCard(WiredControllerInfo controller, HeatPumpModuleInfo module)
+        {
+            var telemetry = module.Telemetry;
+            return new LineControllerCardViewModel(
+                module.Name,
+                $"模块 {module.ModuleIndex + 1} / 从站 {module.SlaveId} / {(module.IsEnabled ? "启用" : "禁用")}",
+                module,
+                new List<string>
+                {
+                    $"控制器 {controller.Name} / {(controller.IsOnline ? "在线" : "离线")}",
+                    $"出水温度 {telemetry.OutletWaterTemperature:F1} °C",
+                    $"回水温度 {telemetry.ReturnWaterTemperature:F1} °C",
+                    $"目标温度 {telemetry.TargetTemperature:F1} °C",
+                    $"环境温度 {telemetry.AmbientTemperature:F1} °C",
+                    $"模式 {telemetry.RunMode}",
+                    $"状态 {telemetry.Status}",
+                    $"压缩机 {(telemetry.CompressorOn ? "开" : "关")} / 水泵 {(telemetry.PumpOn ? "开" : "关")} / 电辅热 {(telemetry.ElectricHeaterOn ? "开" : "关")}",
+                    $"最近更新 {FormatTelemetryTimestamp(telemetry.LastUpdatedAt)}"
+                });
+        }
+
+        private static string BuildControllerTitle(WiredControllerInfo controller)
+        {
+            return $"{controller.Name} / 从站 {controller.SlaveId} / {(controller.IsOnline ? "在线" : "离线")} / 锁定 {(controller.ControllerLockEnabled ? "开" : "关")} / 回差 {controller.Differential} °C";
+        }
+
+        private static string FormatTelemetryTimestamp(DateTime timestamp)
+        {
+            return timestamp == default
+                ? "--"
+                : timestamp.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
+        }
+
+        private void RenderLineControllerGroups(IEnumerable<LineControllerGroupViewModel> groups)
+        {
+            if (_flpLineControllerCards == null)
+            {
+                return;
+            }
+
+            var groupList = groups.ToList();
+
+            _lblLineControllerControllerCountValue.Text = groupList.Count.ToString(CultureInfo.InvariantCulture);
+            _lblLineControllerModuleCountValue.Text = groupList.Sum(group => group.Cards.Count).ToString(CultureInfo.InvariantCulture);
+
+            _flpLineControllerCards.SuspendLayout();
+            _flpLineControllerCards.Controls.Clear();
+
+            foreach (var group in groupList)
+            {
+                AddLineControllerGroup(group);
+            }
+
+            _flpLineControllerCards.ResumeLayout();
+        }
+
+        private void AddLineControllerGroup(LineControllerGroupViewModel group)
+        {
+            var section = new Panel
+            {
+                Width = 1120,
+                AutoSize = true,
+                Margin = new Padding(0, 0, 0, 16),
+                Padding = new Padding(0)
+            };
+
+            var titleBar = new Panel
+            {
+                Dock = DockStyle.Top,
+                Height = 28,
+                Margin = new Padding(0, 0, 0, 8)
+            };
+            var titleLabel = new Label
+            {
+                Text = string.IsNullOrWhiteSpace(group.ModuleGroupName) ? group.Title : group.Title + " / " + group.ModuleGroupName,
+                Dock = DockStyle.Fill,
+                Font = new Font("微软雅黑", 10.5F, FontStyle.Bold, GraphicsUnit.Point, 134),
+                ForeColor = Color.FromArgb(48, 48, 48)
+            };
+            var editControllerButton = new Button
+            {
+                Text = "配置控制器",
+                Dock = DockStyle.Right,
+                Width = 92,
+                Enabled = group.Controller != null
+            };
+            editControllerButton.Click += (sender, e) => EditHeatPumpController(group.Controller);
+            var editGroupButton = new Button
+            {
+                Text = "编辑分组",
+                Dock = DockStyle.Right,
+                Width = 82,
+                Enabled = group.Controller != null && group.Controller.Modules.Count > 0
+            };
+            editGroupButton.Click += (sender, e) => EditHeatPumpModuleGroups(group.Controller);
+            titleBar.Controls.Add(titleLabel);
+            titleBar.Controls.Add(editControllerButton);
+            titleBar.Controls.Add(editGroupButton);
+
+            var cardFlow = new FlowLayoutPanel
+            {
+                Dock = DockStyle.Top,
+                AutoSize = true,
+                WrapContents = true,
+                FlowDirection = FlowDirection.LeftToRight,
+                Margin = new Padding(0),
+                Padding = new Padding(0)
+            };
+
+            foreach (var card in group.Cards)
+            {
+                cardFlow.Controls.Add(CreateLineControllerCard(card));
+            }
+
+            section.Controls.Add(cardFlow);
+            section.Controls.Add(titleBar);
+            _flpLineControllerCards.Controls.Add(section);
+        }
+
+        private Control CreateLineControllerCard(LineControllerCardViewModel cardModel)
+        {
+            var isSelectable = cardModel.Module != null;
+            var card = new Panel
+            {
+                Width = 340,
+                Height = 208,
+                BackColor = Color.White,
+                BorderStyle = BorderStyle.FixedSingle,
+                Margin = new Padding(0, 0, 12, 12),
+                Padding = new Padding(12),
+                Cursor = isSelectable ? Cursors.Hand : Cursors.Default
+            };
+
+            var selection = new CheckBox
+            {
+                Text = "选择模块",
+                AutoSize = true,
+                Dock = DockStyle.Right,
+                Enabled = isSelectable && cardModel.Module.IsEnabled,
+                Checked = isSelectable && cardModel.Module.IsEnabled && _selectedHeatPumpModuleKeys.Contains(GetHeatPumpModuleKey(cardModel.Module)),
+                AccessibleName = "选择模块"
+            };
+            selection.CheckedChanged += (sender, e) => SetHeatPumpModuleSelected(cardModel.Module, selection.Checked);
+            var editModuleButton = new Button
+            {
+                Text = "配置",
+                AutoSize = true,
+                Dock = DockStyle.Right,
+                Enabled = isSelectable
+            };
+            editModuleButton.Click += (sender, e) => EditHeatPumpModule(cardModel.Module);
+
+            var moduleLabel = new Label
+            {
+                Text = cardModel.ModuleName,
+                Dock = DockStyle.Top,
+                Height = 28,
+                Font = new Font("微软雅黑", 10.5F, FontStyle.Bold, GraphicsUnit.Point, 134),
+                ForeColor = Color.FromArgb(32, 64, 96)
+            };
+
+            var subtitleLabel = new Label
+            {
+                Text = cardModel.Subtitle,
+                Dock = DockStyle.Top,
+                Height = 24,
+                Font = new Font("微软雅黑", 9F, FontStyle.Regular, GraphicsUnit.Point, 134),
+                ForeColor = Color.DimGray
+            };
+
+            var lineContainer = new FlowLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                FlowDirection = FlowDirection.TopDown,
+                WrapContents = false,
+                Margin = new Padding(0),
+                Padding = new Padding(0)
+            };
+
+            foreach (var line in cardModel.Lines)
+            {
+                lineContainer.Controls.Add(new Label
+                {
+                    Text = line,
+                    AutoSize = true,
+                    Margin = new Padding(0, 0, 0, 6),
+                    Font = new Font("微软雅黑", 9F, FontStyle.Regular, GraphicsUnit.Point, 134),
+                    ForeColor = Color.FromArgb(60, 60, 60)
+                });
+            }
+
+            if (isSelectable)
+            {
+                EventHandler openDetails = (sender, e) => ShowHeatPumpModuleDetails(cardModel.Module);
+                card.Click += openDetails;
+                moduleLabel.Click += openDetails;
+                subtitleLabel.Click += openDetails;
+                lineContainer.Click += openDetails;
+                foreach (Control line in lineContainer.Controls)
+                {
+                    line.Click += openDetails;
+                }
+            }
+
+            card.Controls.Add(lineContainer);
+            card.Controls.Add(subtitleLabel);
+            card.Controls.Add(selection);
+            card.Controls.Add(editModuleButton);
+            card.Controls.Add(moduleLabel);
+            return card;
+        }
+
+        private static string GetHeatPumpModuleKey(HeatPumpModuleInfo module)
+        {
+            return string.Format(CultureInfo.InvariantCulture, "{0}:{1}", module.SlaveId, module.ModuleIndex);
+        }
+
+        private void SetHeatPumpModuleSelected(HeatPumpModuleInfo module, bool isSelected)
+        {
+            if (module == null)
+            {
+                return;
+            }
+
+            var key = GetHeatPumpModuleKey(module);
+            module.IsSelected = isSelected;
+            if (isSelected)
+            {
+                _selectedHeatPumpModuleKeys.Add(key);
+            }
+            else
+            {
+                _selectedHeatPumpModuleKeys.Remove(key);
+            }
+
+            UpdateHeatPumpSelectionSummary(_heatPumpWorkspaceService.CreateSnapshot());
+        }
+
+        private void UpdateHeatPumpSelectionSummary(HeatPumpWorkspaceSnapshot snapshot)
+        {
+            if (_lblHeatPumpSelectionSummary == null)
+            {
+                return;
+            }
+
+            var selectedModules = snapshot.Controllers
+                .SelectMany(controller => controller.Modules)
+                .Where(module => _selectedHeatPumpModuleKeys.Contains(GetHeatPumpModuleKey(module)))
+                .ToList();
+            var controllerCount = selectedModules.Select(module => module.SlaveId).Distinct().Count();
+            _lblHeatPumpSelectionSummary.Text = string.Format(
+                CultureInfo.InvariantCulture,
+                "已选择 {0} 个模块 / {1} 个控制器",
+                selectedModules.Count,
+                controllerCount);
+        }
+
+        private void ShowHeatPumpModuleDetails(HeatPumpModuleInfo module)
+        {
+            if (module == null)
+            {
+                return;
+            }
+
+            using (var detailsForm = new HeatPumpDetailsForm())
+            {
+                detailsForm.UpdateModule(module);
+                detailsForm.ShowDialog(this);
+            }
+        }
+
+        private void EditHeatPumpController(WiredControllerInfo controller)
+        {
+            if (controller == null)
+            {
+                return;
+            }
+
+            using (var dialog = new HeatPumpDeviceEditorDialog(controller))
+            {
+                if (dialog.ShowDialog(this) == DialogResult.OK)
+                {
+                    PersistHeatPumpDeviceEdits("控制器配置已保存。");
+                }
+            }
+        }
+
+        private void EditHeatPumpModule(HeatPumpModuleInfo module)
+        {
+            if (module == null)
+            {
+                return;
+            }
+
+            var controller = _heatPumpWorkspaceService.CreateSnapshot().Controllers
+                .FirstOrDefault(item => item.SlaveId == module.SlaveId);
+            if (controller == null)
+            {
+                return;
+            }
+
+            using (var dialog = new HeatPumpDeviceEditorDialog(controller, module))
+            {
+                if (dialog.ShowDialog(this) == DialogResult.OK)
+                {
+                    if (!module.IsEnabled)
+                    {
+                        _selectedHeatPumpModuleKeys.Remove(GetHeatPumpModuleKey(module));
+                    }
+
+                    PersistHeatPumpDeviceEdits("模块配置已保存。");
+                }
+            }
+        }
+
+        private void PersistHeatPumpDeviceEdits(string successMessage)
+        {
+            try
+            {
+                SaveHeatPumpWorkspaceConfiguration();
+                RefreshLineControllerPage();
+                _lblLineControllerPageStatus.Text = successMessage;
+            }
+            catch (Exception ex)
+            {
+                _lblLineControllerPageStatus.Text = "热泵配置保存失败: " + ex.Message;
+            }
+        }
+
+        private void EditHeatPumpModuleGroups(WiredControllerInfo controller)
+        {
+            if (controller == null || controller.Modules.Count == 0)
+            {
+                return;
+            }
+
+            using (var dialog = new HeatPumpModuleGroupEditorDialog(controller))
+            {
+                if (dialog.ShowDialog(this) != DialogResult.OK)
+                {
+                    return;
+                }
+
+                try
+                {
+                    SaveHeatPumpWorkspaceConfiguration();
+                    RefreshLineControllerPage();
+                    _lblLineControllerPageStatus.Text = "模块分组已保存。";
+                }
+                catch (Exception ex)
+                {
+                    _lblLineControllerPageStatus.Text = "模块分组保存失败: " + ex.Message;
+                }
+            }
+        }
+
+        private sealed class LineControllerGroupViewModel
+        {
+            public LineControllerGroupViewModel(string title, string moduleGroupName, WiredControllerInfo controller, List<LineControllerCardViewModel> cards)
+            {
+                Title = title;
+                ModuleGroupName = moduleGroupName;
+                Controller = controller;
+                Cards = cards;
+            }
+
+            public string Title { get; }
+            public string ModuleGroupName { get; }
+            public WiredControllerInfo Controller { get; }
+            public List<LineControllerCardViewModel> Cards { get; }
+        }
+
+        private sealed class LineControllerCardViewModel
+        {
+            public LineControllerCardViewModel(string moduleName, string subtitle, HeatPumpModuleInfo module, List<string> lines)
+            {
+                ModuleName = moduleName;
+                Subtitle = subtitle;
+                Module = module;
+                Lines = lines;
+            }
+
+            public string ModuleName { get; }
+            public string Subtitle { get; }
+            public HeatPumpModuleInfo Module { get; }
+            public List<string> Lines { get; }
         }
 
         /// <summary>创建默认分组，主串口与仪表盘串口各自按实际连接设备生成卡片</summary>
@@ -736,8 +1895,7 @@ namespace MeterAcquisition
                 MessageBox.Show("请选择串口", "提示", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
-            _modbusService2.Config.BaudRate = 9600;
-            _modbusService2.Config.Parity = Parity.Even;
+            ApplyMeterCommunicationConfig(_modbusService2, _meterCommunicationConfig);
             _modbusService2.Connect(cmbSecondPort.SelectedItem.ToString());
         }
 
@@ -813,6 +1971,7 @@ namespace MeterAcquisition
             var dashBox = GetOrCreateDashboardBox();
             var meter = _meterManager.AddMeterToBox(dashBox, "E" + _boxCounter.ToString("D3"), "仪表 " + _boxCounter, dashBox.Name, 1);
             meter.IsToolbar = false;
+            meter.DeviceModel = _meterDataService2.DeviceModel;
             RebuildDashboardPanels();
             ResizeDashboardPanels();
         }
@@ -846,8 +2005,7 @@ namespace MeterAcquisition
                 {
                     try
                     {
-                        var rt = _meterDataService2.ReadRealTimeData((byte)addr);
-                        if (rt != null)
+                        if (_meterDataService2.Probe((byte)addr))
                             lock (discovered) discovered.Add((byte)addr);
                     }
                     catch
@@ -1041,7 +2199,8 @@ namespace MeterAcquisition
                 MeterName = meter.Name,
                 Location = meter.Location,
                 SlaveAddress = meter.SlaveAddress,
-                IsToolbar = meter.IsToolbar
+                IsToolbar = meter.IsToolbar,
+                DeviceModel = meter.DeviceModel
             };
         }
 
@@ -1082,6 +2241,7 @@ namespace MeterAcquisition
             _flpBoxContainer.Controls.Clear();
 
             var allMeters = _meterManager.AllMeters;
+            _meterOverview?.RebuildMeters(allMeters);
             var realMeters = allMeters.Where(m => m.IsToolbar).ToList();
             var dashMeters = allMeters.Where(m => !m.IsToolbar).ToList();
 
@@ -1457,6 +2617,7 @@ namespace MeterAcquisition
             if (_flpBoxContainer == null) return;
 
             var allMeters = _meterManager.AllMeters;
+            _meterOverview?.RefreshMeterValues(allMeters);
             foreach (Control card in EnumerateMeterCards(_flpBoxContainer))
             {
                 var meter = allMeters.Find(m => m.Id == card.Name);
@@ -1557,6 +2718,7 @@ namespace MeterAcquisition
                 Location = meter.Location,
                 SlaveAddress = meter.SlaveAddress,
                 IsToolbar = meter.IsToolbar,
+                DeviceModel = meter.DeviceModel,
                 Source = "mqtt",
                 CollectTime = collectTime,
                 SampleType = BuildSampleType(includeRealTime, includeEnergy, includeQuality),
@@ -1611,6 +2773,96 @@ namespace MeterAcquisition
         {
             var value = ConfigurationManager.AppSettings[key];
             return int.TryParse(value, out var parsed) && parsed > 0 ? parsed : defaultValue;
+        }
+
+        private static string GetMeterProtocol()
+        {
+            var protocol = ConfigurationManager.AppSettings["MeterProtocol"];
+            return string.Equals(protocol, "Amc96lE4", StringComparison.OrdinalIgnoreCase) ? "Amc96lE4" : "Legacy";
+        }
+
+        private static CommunicationConfig GetMeterCommunicationConfig(string protocol)
+        {
+            var prefix = protocol == "Amc96lE4" ? "Amc96lE4Meter" : "LegacyMeter";
+            return new CommunicationConfig
+            {
+                BaudRate = GetPositiveIntAppSetting(prefix + "BaudRate", 9600),
+                DataBits = GetPositiveIntAppSetting(prefix + "DataBits", 8),
+                Parity = ParseParity(ConfigurationManager.AppSettings[prefix + "Parity"], protocol == "Amc96lE4" ? Parity.None : Parity.Even),
+                StopBits = ParseStopBits(ConfigurationManager.AppSettings[prefix + "StopBits"], StopBits.One)
+            };
+        }
+
+        private static Parity ParseParity(string value, Parity defaultValue)
+        {
+            return Enum.TryParse(value, true, out Parity parity) ? parity : defaultValue;
+        }
+
+        private static StopBits ParseStopBits(string value, StopBits defaultValue)
+        {
+            return Enum.TryParse(value, true, out StopBits stopBits) ? stopBits : defaultValue;
+        }
+
+        private static void ApplyMeterCommunicationConfig(ModbusService service, CommunicationConfig config)
+        {
+            service.Config.BaudRate = config.BaudRate;
+            service.Config.DataBits = config.DataBits;
+            service.Config.Parity = config.Parity;
+            service.Config.StopBits = config.StopBits;
+            service.Config.SlaveAddress = config.SlaveAddress;
+        }
+
+        private IMeterDataReader CreateMeterDataReader(ModbusService service)
+        {
+            return _meterProtocol == "Amc96lE4"
+                ? (IMeterDataReader)new Amc96lE4MeterDataReader(service)
+                : new MeterDataService(service);
+        }
+
+        private static byte? DiscoverMeterAddress(ModbusService service, IMeterDataReader reader)
+        {
+            for (byte address = 1; address <= 247; address++)
+            {
+                if (reader.Probe(address))
+                {
+                    service.Config.SlaveAddress = address;
+                    return address;
+                }
+            }
+
+            return null;
+        }
+
+        private void btnMeterProtocol_Click(object sender, EventArgs e)
+        {
+            if (_modbusService.IsConnected || _modbusService2.IsConnected)
+            {
+                MessageBox.Show("请先断开两个串口，再切换电表型号", "提示", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            _meterProtocol = _meterProtocol == "Amc96lE4" ? "Legacy" : "Amc96lE4";
+            _meterCommunicationConfig = GetMeterCommunicationConfig(_meterProtocol);
+            ApplyMeterCommunicationConfig(_modbusService, _meterCommunicationConfig);
+            ApplyMeterCommunicationConfig(_modbusService2, _meterCommunicationConfig);
+            _legacyMeterDataService = new MeterDataService(_modbusService);
+            _meterDataService = CreateMeterDataReader(_modbusService);
+            _meterDataService2 = CreateMeterDataReader(_modbusService2);
+            _meterManager = new MeterManager(_meterDataService, _meterDataService2);
+            UpdateMeterProtocolButton();
+            lblStatus.Text = "已切换为" + _meterDataService.DeviceModel + "，请连接串口后扫描设备";
+            lblStatus.ForeColor = Color.Green;
+        }
+
+        private void UpdateMeterProtocolButton()
+        {
+            btnMeterProtocol.Text = _meterProtocol == "Amc96lE4" ? "电表：AMC96L-E4" : "电表：原有电表";
+        }
+
+        private static byte GetHeatPumpScanAddress(string key, byte defaultValue)
+        {
+            var value = ConfigurationManager.AppSettings[key];
+            return byte.TryParse(value, out var parsed) && parsed >= 1 && parsed <= 247 ? parsed : defaultValue;
         }
 
         private static string BuildSampleType(bool includeRealTime, bool includeEnergy, bool includeQuality)
@@ -1992,8 +3244,9 @@ namespace MeterAcquisition
                 MessageBox.Show("从站地址必须在 1-247 之间", "提示", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
-            _modbusService.Config.SlaveAddress = slaveAddress;
-            _modbusService.Config.BaudRate = int.Parse(cmbBaud.SelectedItem.ToString());
+            _meterCommunicationConfig.SlaveAddress = slaveAddress;
+            _meterCommunicationConfig.BaudRate = int.Parse(cmbBaud.SelectedItem.ToString());
+            ApplyMeterCommunicationConfig(_modbusService, _meterCommunicationConfig);
             _modbusService.Connect(cmbPort.SelectedItem.ToString());
         }
 
@@ -2008,17 +3261,19 @@ namespace MeterAcquisition
             }
             lblStatus.Text = "正在探测设备地址...";
             lblStatus.ForeColor = Color.Blue;
-            CommunicationConfig config = new CommunicationConfig
+            var config = new CommunicationConfig
             {
                 BaudRate = int.Parse(cmbBaud.SelectedItem.ToString()),
-                Parity = Parity.Even
+                Parity = _meterCommunicationConfig.Parity,
+                DataBits = _meterCommunicationConfig.DataBits,
+                StopBits = _meterCommunicationConfig.StopBits
             };
             _modbusService.UpdateConfig(config);
             if (!_modbusService.IsConnected)
                 _modbusService.Connect(cmbPort.SelectedItem.ToString());
             if (_modbusService.IsConnected)
             {
-                byte? address = _modbusService.DiscoverSlaveAddress();
+                byte? address = DiscoverMeterAddress(_modbusService, _meterDataService);
                 if (address.HasValue)
                 {
                     txtAddr.Text = address.Value.ToString();
@@ -2039,7 +3294,7 @@ namespace MeterAcquisition
                 MessageBox.Show("请先连接设备", "提示", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
-            CommunicationConfig config = _meterDataService.ReadCommunicationConfig();
+            CommunicationConfig config = _legacyMeterDataService.ReadCommunicationConfig();
             if (config == null)
             {
                 MessageBox.Show("参数读取失败", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
@@ -2064,7 +3319,7 @@ namespace MeterAcquisition
                 BaudRate = int.Parse(cmbParamBaud.SelectedItem.ToString()),
                 Parity = ParseParityFromString(cmbParamParity.SelectedItem.ToString())
             };
-            if (_meterDataService.WriteCommunicationConfig(config))
+            if (_legacyMeterDataService.WriteCommunicationConfig(config))
                 MessageBox.Show("参数写入成功", "成功", MessageBoxButtons.OK, MessageBoxIcon.Information);
             else
                 MessageBox.Show("参数写入失败", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
@@ -2077,7 +3332,7 @@ namespace MeterAcquisition
                 MessageBox.Show("请先连接设备", "提示", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
-            DeviceInfo info = _meterDataService.ReadDeviceInfo();
+            DeviceInfo info = _legacyMeterDataService.ReadDeviceInfo();
             if (info == null)
             {
                 MessageBox.Show("设备信息读取失败", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
@@ -2094,16 +3349,16 @@ namespace MeterAcquisition
         }
 
         private void BtnDO1On_Click(object sender, EventArgs e)
-        { ExecuteControlAction("DO1合闸", () => _meterDataService.DO1_On()); }
+        { ExecuteControlAction("DO1合闸", () => _legacyMeterDataService.DO1_On()); }
 
         private void BtnDO1Off_Click(object sender, EventArgs e)
-        { ExecuteControlAction("DO1分闸", () => _meterDataService.DO1_Off()); }
+        { ExecuteControlAction("DO1分闸", () => _legacyMeterDataService.DO1_Off()); }
 
         private void BtnDO2On_Click(object sender, EventArgs e)
-        { ExecuteControlAction("DO2合闸", () => _meterDataService.DO2_On()); }
+        { ExecuteControlAction("DO2合闸", () => _legacyMeterDataService.DO2_On()); }
 
         private void BtnDO2Off_Click(object sender, EventArgs e)
-        { ExecuteControlAction("DO2分闸", () => _meterDataService.DO2_Off()); }
+        { ExecuteControlAction("DO2分闸", () => _legacyMeterDataService.DO2_Off()); }
 
         private void BtnClearEnergy_Click(object sender, EventArgs e)
         {
@@ -2114,7 +3369,7 @@ namespace MeterAcquisition
             }
             if (MessageBox.Show("确定要清除总电能记录吗？", "确认", MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes)
             {
-                if (_meterDataService.ClearEnergy())
+                if (_legacyMeterDataService.ClearEnergy())
                     MessageBox.Show("清除成功", "成功", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 else
                     MessageBox.Show("清除失败", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
@@ -2170,6 +3425,16 @@ namespace MeterAcquisition
         protected override void OnFormClosing(FormClosingEventArgs e)
         {
             _refreshTimer?.Stop();
+            _heatPumpRefreshTimer?.Stop();
+            try
+            {
+                SaveHeatPumpWorkspaceConfiguration();
+            }
+            catch
+            {
+            }
+
+            _heatPumpWorkspaceService.Dispose();
             _modbusService?.Disconnect();
             _modbusService?.Dispose();
             _modbusService2?.Disconnect();

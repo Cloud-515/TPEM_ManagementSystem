@@ -56,5 +56,86 @@ namespace MeterAcquisition.Properties
                 this["DashboardScanEnd"] = value;
             }
         }
+
+        [global::System.Configuration.UserScopedSettingAttribute()]
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
+        [global::System.Configuration.DefaultSettingValueAttribute("")]
+        public string HeatPumpPortName
+        {
+            get { return ((string)(this["HeatPumpPortName"])); }
+            set { this["HeatPumpPortName"] = value; }
+        }
+
+        [global::System.Configuration.UserScopedSettingAttribute()]
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
+        [global::System.Configuration.DefaultSettingValueAttribute("9600")]
+        public int HeatPumpBaudRate
+        {
+            get { return ((int)(this["HeatPumpBaudRate"])); }
+            set { this["HeatPumpBaudRate"] = value; }
+        }
+
+        [global::System.Configuration.UserScopedSettingAttribute()]
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
+        [global::System.Configuration.DefaultSettingValueAttribute("8")]
+        public int HeatPumpDataBits
+        {
+            get { return ((int)(this["HeatPumpDataBits"])); }
+            set { this["HeatPumpDataBits"] = value; }
+        }
+
+        [global::System.Configuration.UserScopedSettingAttribute()]
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
+        [global::System.Configuration.DefaultSettingValueAttribute("None")]
+        public string HeatPumpParity
+        {
+            get { return ((string)(this["HeatPumpParity"])); }
+            set { this["HeatPumpParity"] = value; }
+        }
+
+        [global::System.Configuration.UserScopedSettingAttribute()]
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
+        [global::System.Configuration.DefaultSettingValueAttribute("1")]
+        public int HeatPumpStopBits
+        {
+            get { return ((int)(this["HeatPumpStopBits"])); }
+            set { this["HeatPumpStopBits"] = value; }
+        }
+
+        [global::System.Configuration.UserScopedSettingAttribute()]
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
+        [global::System.Configuration.DefaultSettingValueAttribute("1000")]
+        public int HeatPumpReadTimeoutMs
+        {
+            get { return ((int)(this["HeatPumpReadTimeoutMs"])); }
+            set { this["HeatPumpReadTimeoutMs"] = value; }
+        }
+
+        [global::System.Configuration.UserScopedSettingAttribute()]
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
+        [global::System.Configuration.DefaultSettingValueAttribute("1000")]
+        public int HeatPumpWriteTimeoutMs
+        {
+            get { return ((int)(this["HeatPumpWriteTimeoutMs"])); }
+            set { this["HeatPumpWriteTimeoutMs"] = value; }
+        }
+
+        [global::System.Configuration.UserScopedSettingAttribute()]
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
+        [global::System.Configuration.DefaultSettingValueAttribute("1")]
+        public int HeatPumpScanStartAddress
+        {
+            get { return ((int)(this["HeatPumpScanStartAddress"])); }
+            set { this["HeatPumpScanStartAddress"] = value; }
+        }
+
+        [global::System.Configuration.UserScopedSettingAttribute()]
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
+        [global::System.Configuration.DefaultSettingValueAttribute("16")]
+        public int HeatPumpScanEndAddress
+        {
+            get { return ((int)(this["HeatPumpScanEndAddress"])); }
+            set { this["HeatPumpScanEndAddress"] = value; }
+        }
     }
 }
