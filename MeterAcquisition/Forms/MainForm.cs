@@ -205,66 +205,22 @@ namespace MeterAcquisition
                 UseVisualStyleBackColor = true
             };
 
-            var root = new TableLayoutPanel
-            {
-                Dock = DockStyle.Fill,
-                ColumnCount = 1,
-                RowCount = 5,
-                Padding = new Padding(12)
-            };
-            root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-            root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-            root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-            root.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
-            root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-
+            var lineControllerControl = new LineControllerControl();
             var connectionBar = CreateHeatPumpConnectionBar();
             var groupControlBar = CreateHeatPumpGroupControlBar();
-            var summary = new TableLayoutPanel
-            {
-                Dock = DockStyle.Top,
-                ColumnCount = 4,
-                AutoSize = true,
-                Margin = new Padding(0, 0, 0, 12)
-            };
-            summary.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 25F));
-            summary.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 25F));
-            summary.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 25F));
-            summary.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 25F));
+            lineControllerControl.ConnectionBarHost.Controls.Add(connectionBar);
+            lineControllerControl.GroupControlBarHost.Controls.Add(groupControlBar);
+            _lblLineControllerConnectionValue = lineControllerControl.ConnectionValueLabel;
+            _lblLineControllerControllerCountValue = lineControllerControl.ControllerCountValueLabel;
+            _lblLineControllerModuleCountValue = lineControllerControl.ModuleCountValueLabel;
+            _lblLineControllerRefreshValue = lineControllerControl.RefreshValueLabel;
+            _flpLineControllerCards = lineControllerControl.CardsPanel;
+            _lblLineControllerPageStatus = lineControllerControl.PageStatusLabel;
+            _lblLineControllerPageStatus.Text = string.IsNullOrWhiteSpace(_pendingHeatPumpConfigurationWarning)
+                ? "请选择热泵独立串口并连接后扫描线控器。"
+                : _pendingHeatPumpConfigurationWarning;
 
-            _lblLineControllerConnectionValue = AddSummaryCard(summary, 0, "连接状态", "未连接");
-            _lblLineControllerControllerCountValue = AddSummaryCard(summary, 1, "控制器数量", "0");
-            _lblLineControllerModuleCountValue = AddSummaryCard(summary, 2, "模块数量", "0");
-            _lblLineControllerRefreshValue = AddSummaryCard(summary, 3, "最近刷新", "--");
-
-            _flpLineControllerCards = new FlowLayoutPanel
-            {
-                Dock = DockStyle.Fill,
-                AutoScroll = true,
-                FlowDirection = FlowDirection.TopDown,
-                WrapContents = false,
-                Padding = new Padding(0),
-                Margin = new Padding(0)
-            };
-
-            _lblLineControllerPageStatus = new Label
-            {
-                Text = string.IsNullOrWhiteSpace(_pendingHeatPumpConfigurationWarning)
-                    ? "请选择热泵独立串口并连接后扫描线控器。"
-                    : _pendingHeatPumpConfigurationWarning,
-                Dock = DockStyle.Fill,
-                AutoSize = true,
-                ForeColor = Color.DimGray,
-                Margin = new Padding(0, 12, 0, 0)
-            };
-
-            root.Controls.Add(connectionBar, 0, 0);
-            root.Controls.Add(groupControlBar, 0, 1);
-            root.Controls.Add(summary, 0, 2);
-            root.Controls.Add(_flpLineControllerCards, 0, 3);
-            root.Controls.Add(_lblLineControllerPageStatus, 0, 4);
-
-            _tabLineController.Controls.Add(root);
+            _tabLineController.Controls.Add(lineControllerControl);
             tabControlMain.TabPages.Add(_tabLineController);
 
             _heatPumpAnalysisControl = new HeatPumpMonitorControl();

@@ -5,6 +5,7 @@ using System.Globalization;
 using System.Linq;
 using System.Threading.Tasks;
 using System.Windows.Forms;
+using System.ComponentModel;
 using System.Windows.Forms.DataVisualization.Charting;
 using MeterAcquisition.HeatPump.Application;
 using MeterAcquisition.HeatPump.Domain;
@@ -12,7 +13,7 @@ using MeterAcquisition.HeatPump.Services;
 
 namespace MeterAcquisition.HeatPump.Forms
 {
-    internal sealed class HeatPumpMonitorControl : UserControl
+    internal sealed partial class HeatPumpMonitorControl : UserControl
     {
         private readonly HeatPumpHistoryQueryService _historyService;
         private ComboBox _historyDeviceComboBox;
@@ -31,79 +32,26 @@ namespace MeterAcquisition.HeatPump.Forms
 
         public HeatPumpMonitorControl()
         {
+            InitializeComponent();
+            if (LicenseManager.UsageMode == System.ComponentModel.LicenseUsageMode.Designtime)
+            {
+                _historyService = null;
+                _historyStatusLabel.Text = "设计预览";
+                _summaryLabel.Text = "示例模块 | 室温 24.5 °C | 设定 26.0 °C | 在线";
+                return;
+            }
+
             _historyService = new HeatPumpHistoryQueryService();
-            Dock = DockStyle.Fill;
-            BackColor = Color.FromArgb(244, 247, 250);
-            Controls.Add(CreateHistoryPage());
+            _metricComboBox.DataSource = _historyService.GetMetrics();
+            _historyDeviceComboBox.SelectedIndexChanged += SelectHistoryDevice;
+            _queryButton.Click += async (sender, args) => await QueryHistoryAsync();
+            _compareButton.Click += async (sender, args) => await QueryComparisonAsync();
             Load += async (sender, args) =>
             {
                 EnsureHistoryChart();
-                if (!_historyLoaded)
-                {
-                    await LoadHistoryDevicesAsync();
-                }
+                if (!_historyLoaded) await LoadHistoryDevicesAsync();
             };
             SizeChanged += (sender, args) => EnsureHistoryChart();
-        }
-
-        private Control CreateHistoryPage()
-        {
-            var page = new Panel { Dock = DockStyle.Fill, BackColor = BackColor, Padding = new Padding(8) };
-            var filterPanel = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 76, Padding = new Padding(6), BackColor = Color.White, WrapContents = true };
-            filterPanel.Controls.Add(CreateFilterLabel("模块"));
-            _historyDeviceComboBox = new ComboBox { Width = 220, DropDownStyle = ComboBoxStyle.DropDownList };
-            _historyDeviceComboBox.SelectedIndexChanged += SelectHistoryDevice;
-            filterPanel.Controls.Add(_historyDeviceComboBox);
-            filterPanel.Controls.Add(CreateFilterLabel("指标"));
-            _metricComboBox = new ComboBox { Width = 130, DropDownStyle = ComboBoxStyle.DropDownList };
-            _metricComboBox.DataSource = _historyService.GetMetrics();
-            filterPanel.Controls.Add(_metricComboBox);
-            filterPanel.Controls.Add(CreateFilterLabel("开始"));
-            _startPicker = CreateDatePicker(DateTime.Today.AddDays(-1));
-            filterPanel.Controls.Add(_startPicker);
-            filterPanel.Controls.Add(CreateFilterLabel("结束"));
-            _endPicker = CreateDatePicker(DateTime.Now);
-            filterPanel.Controls.Add(_endPicker);
-            _queryButton = new Button { Text = "查询趋势", Width = 88, Height = 26, Margin = new Padding(10, 5, 3, 3) };
-            _queryButton.Click += async (sender, args) => await QueryHistoryAsync();
-            filterPanel.Controls.Add(_queryButton);
-            _compareButton = new Button { Text = "模块对比", Width = 88, Height = 26, Margin = new Padding(3, 5, 3, 3) };
-            _compareButton.Click += async (sender, args) => await QueryComparisonAsync();
-            filterPanel.Controls.Add(_compareButton);
-            _historyStatusLabel = new Label { AutoSize = true, ForeColor = Color.DimGray, Margin = new Padding(12, 9, 3, 3) };
-            filterPanel.Controls.Add(_historyStatusLabel);
-
-            _summaryLabel = new Label { Dock = DockStyle.Fill, Padding = new Padding(10, 6, 10, 4), BackColor = Color.White, ForeColor = Color.FromArgb(45, 45, 45) };
-            _chartHostPanel = new Panel { Dock = DockStyle.Fill, BackColor = Color.White };
-            _eventGrid = CreateEventGrid();
-            _comparisonDevicesList = new CheckedListBox { Dock = DockStyle.Fill, CheckOnClick = true, BorderStyle = BorderStyle.FixedSingle };
-            var comparisonPanel = new Panel { Dock = DockStyle.Fill, Padding = new Padding(0, 0, 8, 0) };
-            comparisonPanel.Controls.Add(_comparisonDevicesList);
-            comparisonPanel.Controls.Add(new Label { Text = "选择模块进行对比", Dock = DockStyle.Top, Height = 25, TextAlign = ContentAlignment.MiddleLeft, Font = new Font("Microsoft YaHei UI", 9F, FontStyle.Bold) });
-
-            var eventPanel = new Panel { Dock = DockStyle.Fill, Padding = new Padding(0, 8, 0, 0) };
-            eventPanel.Controls.Add(_eventGrid);
-            eventPanel.Controls.Add(new Label { Text = "告警事件", Dock = DockStyle.Top, Height = 25, TextAlign = ContentAlignment.MiddleLeft, Font = new Font("Microsoft YaHei UI", 9F, FontStyle.Bold) });
-            var chartPanel = new Panel { Dock = DockStyle.Fill, Padding = new Padding(0, 8, 0, 0) };
-            chartPanel.Controls.Add(_chartHostPanel);
-
-            var analysisPanel = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 4, Padding = new Padding(0) };
-            analysisPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 228F));
-            analysisPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
-            analysisPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 76F));
-            analysisPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 48F));
-            analysisPanel.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
-            analysisPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 180F));
-            analysisPanel.Controls.Add(filterPanel, 0, 0);
-            analysisPanel.SetColumnSpan(filterPanel, 2);
-            analysisPanel.Controls.Add(_summaryLabel, 0, 1);
-            analysisPanel.SetColumnSpan(_summaryLabel, 2);
-            analysisPanel.Controls.Add(comparisonPanel, 0, 2);
-            analysisPanel.Controls.Add(chartPanel, 1, 2);
-            analysisPanel.Controls.Add(eventPanel, 0, 3);
-            analysisPanel.SetColumnSpan(eventPanel, 2);
-            page.Controls.Add(analysisPanel);
-            return page;
         }
 
         private async Task LoadHistoryDevicesAsync()

@@ -6,33 +6,23 @@ using System.Windows.Forms;
 
 namespace MeterAcquisition
 {
-    internal sealed class MeterOverviewControl : UserControl
+    internal sealed partial class MeterOverviewControl : UserControl
     {
-        private readonly FlowLayoutPanel _sectionsPanel;
         private readonly Dictionary<string, MeterCardBinding> _cards = new Dictionary<string, MeterCardBinding>();
         private readonly Func<MeterInfo, (string Text, Color Color, bool IsOffline)> _statusResolver;
 
         public event EventHandler<MeterSelectedEventArgs> MeterSelected;
 
+        public MeterOverviewControl()
+        {
+            InitializeComponent();
+            _sectionsPanel.SizeChanged += SectionsPanel_SizeChanged;
+        }
+
         public MeterOverviewControl(Func<MeterInfo, (string Text, Color Color, bool IsOffline)> statusResolver)
+            : this()
         {
             _statusResolver = statusResolver ?? throw new ArgumentNullException(nameof(statusResolver));
-
-            BackColor = Color.FromArgb(245, 247, 250);
-            Dock = DockStyle.Fill;
-            Padding = new Padding(12);
-
-            _sectionsPanel = new FlowLayoutPanel
-            {
-                Dock = DockStyle.Fill,
-                AutoScroll = true,
-                FlowDirection = FlowDirection.TopDown,
-                WrapContents = false,
-                BackColor = Color.Transparent,
-                Padding = new Padding(0, 0, 12, 0),
-            };
-            _sectionsPanel.SizeChanged += SectionsPanel_SizeChanged;
-            Controls.Add(_sectionsPanel);
         }
 
         public void RebuildMeters(IEnumerable<MeterInfo> meters)
@@ -290,7 +280,9 @@ namespace MeterAcquisition
 
         private void UpdateCard(MeterCardBinding card, MeterInfo meter)
         {
-            var status = _statusResolver(meter);
+            var status = _statusResolver == null
+                ? (Text: "设计预览", Color: Color.FromArgb(108, 117, 125), IsOffline: false)
+                : _statusResolver(meter);
             if (!status.IsOffline && meter.RealTime != null)
             {
                 var powerKw = meter.RealTime.ActivePowerTotal / 1000f;

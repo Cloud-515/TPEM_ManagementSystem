@@ -173,6 +173,9 @@
     <Compile Include="HeatPump\Forms\HeatPumpMonitorControl.cs">
       <SubType>UserControl</SubType>
     </Compile>
+    <Compile Include="HeatPump\Forms\HeatPumpMonitorControl.Designer.cs">
+      <DependentUpon>HeatPumpMonitorControl.cs</DependentUpon>
+    </Compile>
     <Compile Include="HeatPump\Forms\HeatPumpDeviceEditorDialog.cs">
       <SubType>Form</SubType>
     </Compile>
@@ -195,6 +198,33 @@
     <Compile Include="Thermostat\Forms\ThermostatMonitorControl.cs">
       <SubType>UserControl</SubType>
     </Compile>
+    <Compile Include="Thermostat\Forms\ThermostatMonitorControl.Designer.cs">
+      <DependentUpon>ThermostatMonitorControl.cs</DependentUpon>
+    </Compile>
+    <Compile Include="Thermostat\Forms\ThermostatDetailsForm.Designer.cs">
+      <DependentUpon>ThermostatDetailsForm.cs</DependentUpon>
+    </Compile>
+    <Compile Include="Thermostat\Forms\ThermostatFanDiagnosticForm.Designer.cs">
+      <DependentUpon>ThermostatFanDiagnosticForm.cs</DependentUpon>
+    </Compile>
+    <Compile Include="Thermostat\Forms\ThermostatConnectionBar.cs">
+      <SubType>UserControl</SubType>
+    </Compile>
+    <Compile Include="Thermostat\Forms\ThermostatConnectionBar.Designer.cs">
+      <DependentUpon>ThermostatConnectionBar.cs</DependentUpon>
+    </Compile>
+    <Compile Include="Thermostat\Forms\ThermostatControlBar.cs">
+      <SubType>UserControl</SubType>
+    </Compile>
+    <Compile Include="Thermostat\Forms\ThermostatControlBar.Designer.cs">
+      <DependentUpon>ThermostatControlBar.cs</DependentUpon>
+    </Compile>
+    <Compile Include="Thermostat\Forms\ThermostatStatusBar.cs">
+      <SubType>UserControl</SubType>
+    </Compile>
+    <Compile Include="Thermostat\Forms\ThermostatStatusBar.Designer.cs">
+      <DependentUpon>ThermostatStatusBar.cs</DependentUpon>
+    </Compile>
     <Compile Include="Thermostat\Forms\ThermostatDetailsForm.cs">
       <SubType>Form</SubType>
     </Compile>
@@ -212,8 +242,17 @@
     <Compile Include="Forms\MeterOverviewControl.cs">
       <SubType>UserControl</SubType>
     </Compile>
+    <Compile Include="Forms\MeterOverviewControl.Designer.cs">
+      <DependentUpon>MeterOverviewControl.cs</DependentUpon>
+    </Compile>
     <Compile Include="Forms\MainForm.cs">
       <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="Forms\LineControllerControl.cs">
+      <SubType>UserControl</SubType>
+    </Compile>
+    <Compile Include="Forms\LineControllerControl.Designer.cs">
+      <DependentUpon>LineControllerControl.cs</DependentUpon>
     </Compile>
     <Compile Include="Forms\MainForm.Designer.cs">
       <DependentUpon>MainForm.cs</DependentUpon>

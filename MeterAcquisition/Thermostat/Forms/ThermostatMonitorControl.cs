@@ -1,4 +1,5 @@
 using System;
+using System.ComponentModel;
 using System.Drawing;
 using System.Linq;
 using System.Threading.Tasks;
@@ -9,32 +10,42 @@ using MeterAcquisition.Thermostat.Domain;
 
 namespace MeterAcquisition.Thermostat.Forms
 {
-    public sealed class ThermostatMonitorControl : UserControl
+    public sealed partial class ThermostatMonitorControl : UserControl
     {
-        private readonly ThermostatWorkspaceService _workspace = new ThermostatWorkspaceService();
-        private readonly ThermostatWorkspaceConfigStore _configStore = new ThermostatWorkspaceConfigStore();
-        private readonly DataGridView _grid;
-        private readonly ComboBox _portComboBox = new ComboBox { DropDownStyle = ComboBoxStyle.DropDown, Width = 130, MinimumSize = new Size(130, 32) };
-        private readonly NumericUpDown _startAddress = new NumericUpDown { Minimum = 1, Maximum = 99, Value = 1, Width = 60, MinimumSize = new Size(60, 32) };
-        private readonly NumericUpDown _endAddress = new NumericUpDown { Minimum = 1, Maximum = 99, Value = 99, Width = 60, MinimumSize = new Size(60, 32) };
-        private readonly ComboBox _modeComboBox = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 120, MinimumSize = new Size(120, 32) };
-        private readonly ComboBox _fanSpeedComboBox = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 90, MinimumSize = new Size(90, 32) };
-        private readonly Label _statusLabel = new Label { AutoSize = true, MaximumSize = new Size(0, 0), TextAlign = ContentAlignment.MiddleLeft, Text = "未连接" };
+        private ThermostatWorkspaceService _workspace;
+        private ThermostatWorkspaceConfigStore _configStore;
+        private DataGridView _grid;
+        private ComboBox _portComboBox;
+        private NumericUpDown _startAddress;
+        private NumericUpDown _endAddress;
+        private ComboBox _modeComboBox;
+        private ComboBox _fanSpeedComboBox;
+        private Label _statusLabel;
         private readonly System.Windows.Forms.Timer _refreshTimer = new System.Windows.Forms.Timer { Interval = 5000 };
         private bool _refreshing;
 
         public ThermostatMonitorControl()
         {
-            Dock = DockStyle.Fill;
+            InitializeComponent();
+            if (LicenseManager.UsageMode == System.ComponentModel.LicenseUsageMode.Designtime)
+            {
+                return;
+            }
+
+            _workspace = new ThermostatWorkspaceService();
+            _configStore = new ThermostatWorkspaceConfigStore();
             _portComboBox.Items.AddRange(System.IO.Ports.SerialPort.GetPortNames().OrderBy(port => port).Cast<object>().ToArray());
             BindSelections();
 
-            var toolbar = CreateToolbar(out var connectButton, out var disconnectButton, out var scanButton, out var refreshButton, out var powerButton, out var applyModeButton, out var applyFanSpeedButton, out var temperatureButton, out var fanDiagnosticButton);
-            _grid = CreateGrid();
-            var content = new Panel { Dock = DockStyle.Fill, AutoScroll = true };
-            content.Controls.Add(_grid);
-            content.Controls.Add(toolbar);
-            Controls.Add(content);
+            var connectButton = _connectionBar.ConnectButton;
+            var disconnectButton = _connectionBar.DisconnectButton;
+            var scanButton = _connectionBar.ScanButton;
+            var refreshButton = _connectionBar.RefreshButton;
+            var powerButton = _controlBar.PowerButton;
+            var applyModeButton = _controlBar.ApplyModeButton;
+            var applyFanSpeedButton = _controlBar.ApplyFanSpeedButton;
+            var temperatureButton = _controlBar.TemperatureButton;
+            var fanDiagnosticButton = _controlBar.FanDiagnosticButton;
 
             connectButton.Click += async (sender, args) => await ConnectAsync();
             disconnectButton.Click += async (sender, args) => await DisconnectAsync();
@@ -55,7 +66,7 @@ namespace MeterAcquisition.Thermostat.Forms
             if (disposing)
             {
                 _refreshTimer.Dispose();
-                _workspace.Dispose();
+                _workspace?.Dispose();
             }
             base.Dispose(disposing);
         }
