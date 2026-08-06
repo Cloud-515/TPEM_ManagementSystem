@@ -13,14 +13,15 @@
     </section>
 
     <section class="metric-grid">
-      <article v-for="metric in metrics" :key="metric.label" class="metric-card" :class="metric.type">
+      <button v-for="metric in metrics" :key="metric.label" type="button" class="metric-card" :class="metric.type" @click="openMetric(metric)">
         <div class="metric-icon"><i :class="metric.icon" /></div>
-        <div>
+        <div class="metric-content">
           <div class="metric-label">{{ metric.label }}</div>
           <div class="metric-value">{{ metric.value }}<small v-if="metric.unit">{{ metric.unit }}</small></div>
           <div class="metric-note">{{ metric.note }}</div>
+          <div class="metric-link">查看详情 <i class="el-icon-arrow-right" /></div>
         </div>
-      </article>
+      </button>
     </section>
 
     <el-row :gutter="20" class="dashboard-row">
@@ -75,10 +76,13 @@
         <section class="panel fault-panel">
           <div class="panel-header">
             <div><h2>报警故障</h2><p>按严重程度展示当前设备报警与故障</p></div>
-            <span class="unit-label">{{ exceptions.length }} 条</span>
+            <div>
+              <span class="unit-label">{{ exceptions.length }} 条</span>
+              <el-button type="text" @click="openExceptionDevices">显示更多</el-button>
+            </div>
           </div>
           <div class="fault-list">
-            <div v-for="fault in exceptions.slice(0, 6)" :key="fault.meterId" class="fault-item">
+            <div v-for="fault in exceptions.slice(0, 5)" :key="fault.meterId" class="fault-item">
               <span class="fault-dot" :class="fault.statusCode" />
               <div class="fault-info">
                 <strong>{{ fault.meterName || '未命名设备' }}</strong>
@@ -95,7 +99,10 @@
     <section class="panel exception-panel">
       <div class="panel-header">
         <div><h2>异常设备</h2><p>{{ statusFilter ? '已按状态筛选' : '按严重程度展示最新采集异常' }}</p></div>
-        <el-button v-if="statusFilter" type="text" @click="statusFilter = ''">清除筛选</el-button>
+        <div>
+          <el-button v-if="statusFilter" type="text" @click="statusFilter = ''">清除筛选</el-button>
+          <el-button type="text" @click="openExceptionDevices">显示更多</el-button>
+        </div>
       </div>
       <el-table :data="visibleExceptions" size="small" :empty-text="'当前没有异常设备'">
         <el-table-column prop="meterName" label="设备名称" min-width="160" />
@@ -151,10 +158,10 @@ export default {
       const powerValues = this.meters.map(item => Number(item.activePowerKw)).filter(value => Number.isFinite(value) && value >= 0)
       const power = powerValues.length ? powerValues.reduce((sum, value) => sum + value, 0) : null
       return [
-        { label: '当前总负荷', value: this.formatNumber(power), unit: 'kW', note: power === null ? '暂无有效实时功率数据' : '所有有效仪表实时功率汇总', icon: 'el-icon-data-line', type: 'primary' },
-        { label: '监测设备', value: total, unit: '台', note: `正常运行 ${normal} 台`, icon: 'el-icon-monitor', type: 'blue' },
-        { label: '异常设备', value: total - normal, unit: '台', note: `离线或待数据 ${offline} 台`, icon: 'el-icon-warning-outline', type: 'warning' },
-        { label: '报警故障', value: this.exceptions.length, unit: '条', note: '当前设备报警与故障数量', icon: 'el-icon-bell', type: 'danger' }
+        { label: '当前总负荷', value: this.formatNumber(power), unit: 'kW', note: power === null ? '暂无有效实时功率数据' : '所有有效仪表实时功率汇总', icon: 'el-icon-data-line', type: 'primary', routeName: 'MeterEnergy' },
+        { label: '监测设备', value: total, unit: '台', note: `正常运行 ${normal} 台`, icon: 'el-icon-monitor', type: 'blue', routeName: 'MeterRealtime' },
+        { label: '异常设备', value: total - normal, unit: '台', note: `离线或待数据 ${offline} 台`, icon: 'el-icon-warning-outline', type: 'warning', routeName: 'MeterExceptionDevices' },
+        { label: '报警故障', value: this.exceptions.length, unit: '条', note: '当前设备报警与故障数量', icon: 'el-icon-bell', type: 'danger', routeName: 'MeterExceptionDevices' }
       ]
     },
     statusDistribution() {
@@ -168,7 +175,8 @@ export default {
       return this.meters.filter(item => item.statusCode !== 'OK').sort((a, b) => severity[a.statusCode] - severity[b.statusCode])
     },
     visibleExceptions() {
-      return this.statusFilter ? this.exceptions.filter(item => item.statusCode === this.statusFilter) : this.exceptions
+      const exceptions = this.statusFilter ? this.exceptions.filter(item => item.statusCode === this.statusFilter) : this.exceptions
+      return exceptions.slice(0, 5)
     },
     trendHasData() {
       return this.trendPoints.some(item => item.consumptionKwh !== null && item.consumptionKwh !== undefined)
@@ -284,6 +292,12 @@ export default {
     },
     openMeter(meter) {
       if (meter && meter.meterId) this.$router.push({ name: 'MeterAlarmRecord', query: { meterId: meter.meterId } })
+    },
+    openExceptionDevices() {
+      this.$router.push({ name: 'MeterExceptionDevices' })
+    },
+    openMetric(metric) {
+      if (metric && metric.routeName) this.$router.push({ name: metric.routeName })
     }
   }
 }
@@ -296,9 +310,10 @@ export default {
 h1 { margin: 5px 0; font-size: 26px; font-weight: 650; } h2 { margin: 0; font-size: 16px; } p { margin: 5px 0 0; color: #718096; font-size: 13px; }
 .header-actions { display: flex; align-items: center; gap: 14px; } .update-time { color: #718096; font-size: 12px; }
 .metric-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; margin-bottom: 20px; }
-.metric-card { display: flex; align-items: center; gap: 14px; padding: 18px; min-height: 112px; background: #fff; border: 1px solid #e8eef4; border-radius: 10px; box-shadow: 0 2px 8px rgba(15, 23, 42, .035); }
-.metric-icon { display: grid; width: 42px; height: 42px; place-items: center; border-radius: 10px; font-size: 21px; } .primary .metric-icon { color: #1677a8; background: #e5f3f9; } .blue .metric-icon { color: #406cc3; background: #edf1ff; } .warning .metric-icon { color: #ce7a11; background: #fff3df; } .danger .metric-icon { color: #c94747; background: #fdebec; }
-.metric-label, .metric-note { color: #718096; font-size: 12px; } .metric-value { margin: 3px 0; font-size: 25px; font-weight: 650; letter-spacing: -.5px; } .metric-value small { margin-left: 4px; font-size: 12px; font-weight: 500; color: #718096; }
+.metric-card { display: flex; width: 100%; min-height: 112px; align-items: center; gap: 14px; padding: 18px; color: inherit; border: 1px solid #e8eef4; border-radius: 10px; background: #fff; box-shadow: 0 2px 8px rgba(15, 23, 42, .035); cursor: pointer; font: inherit; text-align: left; transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease; }
+.metric-card:hover { border-color: #b9d8e7; box-shadow: 0 8px 18px rgba(15, 23, 42, .09); transform: translateY(-2px); }.metric-card:focus-visible { outline: 3px solid rgba(22, 119, 168, .32); outline-offset: 2px; }
+.metric-content { min-width: 0; }.metric-icon { display: grid; width: 42px; height: 42px; place-items: center; border-radius: 10px; font-size: 21px; } .primary .metric-icon { color: #1677a8; background: #e5f3f9; } .blue .metric-icon { color: #406cc3; background: #edf1ff; } .warning .metric-icon { color: #ce7a11; background: #fff3df; } .danger .metric-icon { color: #c94747; background: #fdebec; }
+.metric-label, .metric-note { color: #718096; font-size: 12px; } .metric-value { margin: 3px 0; font-size: 25px; font-weight: 650; letter-spacing: -.5px; } .metric-value small { margin-left: 4px; font-size: 12px; font-weight: 500; color: #718096; }.metric-link { margin-top: 7px; color: #1677a8; font-size: 12px; font-weight: 600; }
 .dashboard-row { margin-bottom: 20px; } .panel { position: relative; min-height: 344px; padding: 20px; background: #fff; border: 1px solid #e8eef4; border-radius: 10px; box-shadow: 0 2px 8px rgba(15, 23, 42, .035); } .panel-header { display: flex; justify-content: space-between; align-items: flex-start; min-height: 43px; }.chart { width: 100%; }.trend-chart { height: 258px; }.health-chart { height: 206px; }.load-chart { height: 262px; }.chart-empty { position: absolute; top: 56%; left: 50%; color: #94a3b8; font-size: 13px; transform: translate(-50%, -50%); }.unit-label { color: #718096; font-size: 12px; }
 .status-legend { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px 10px; }.legend-item { display: flex; align-items: center; gap: 6px; padding: 3px 0; color: #64748b; border: 0; background: transparent; cursor: pointer; text-align: left; }.legend-item.active { color: #1677a8; font-weight: 600; }.legend-item strong { margin-left: auto; color: #334155; }.legend-dot { width: 8px; height: 8px; border-radius: 50%; }
 .fault-panel { min-height: 344px; }.fault-list { margin-top: 8px; }.fault-item { display: flex; align-items: center; gap: 10px; padding: 11px 0; border-bottom: 1px solid #edf2f7; }.fault-dot { flex: 0 0 8px; width: 8px; height: 8px; border-radius: 50%; background: #c94747; }.fault-dot.PF_LOW, .fault-dot.VOLTAGE_BAD { background: #d98b1d; }.fault-dot.NODATA, .fault-dot.WAITING { background: #77879a; }.fault-info { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 4px; }.fault-info strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }.fault-info span { overflow: hidden; color: #718096; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }.fault-empty { padding: 48px 0; color: #94a3b8; text-align: center; font-size: 13px; }
