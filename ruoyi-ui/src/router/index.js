@@ -79,19 +79,19 @@ export const constantRoutes = [
     component: Layout,
     redirect: '/meter/realtime',
     name: 'Meter',
-    meta: { title: '设备监控', icon: 'monitor' },
+    meta: { title: '电表监控', icon: 'monitor' },
     children: [
       {
         path: 'realtime',
         component: () => import('@/views/meter/realtime'),
         name: 'MeterRealtime',
-        meta: { title: '实时数据', icon: 'dashboard' }
+        meta: { title: '实时运行', icon: 'dashboard' }
       },
       {
         path: 'energy',
         component: () => import('@/views/meter/energy'),
         name: 'MeterEnergy',
-        meta: { title: '电能数据', icon: 'chart' }
+        meta: { title: '能耗分析', icon: 'chart' }
       },
       {
         path: 'quality',
@@ -103,7 +103,14 @@ export const constantRoutes = [
         path: 'history',
         component: () => import('@/views/meter/history'),
         name: 'MeterHistory',
-        meta: { title: '历史数据查询', icon: 'date' }
+        meta: { title: '历史追溯', icon: 'date' }
+      },
+      {
+        path: 'alarm-record',
+        component: () => import('@/views/meter/alarm-record'),
+        name: 'MeterAlarmRecord',
+        hidden: true,
+        meta: { title: '报警记录', activeMenu: '/index' }
       }
     ]
   },
