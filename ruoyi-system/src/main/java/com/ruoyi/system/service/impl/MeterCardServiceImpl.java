@@ -6,14 +6,17 @@ import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Calendar;
 import java.util.Date;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.stream.Collectors;
 import com.ruoyi.common.annotation.DataSource;
 import com.ruoyi.common.enums.DataSourceType;
 import com.ruoyi.system.domain.MeterEnergyReading;
 import com.ruoyi.system.domain.MeterHistoryTrend;
+import com.ruoyi.system.domain.MeterQualityRiskStats;
 import com.ruoyi.system.domain.MeterEnergyTrendPoint;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -83,7 +86,34 @@ public class MeterCardServiceImpl implements IMeterCardService
     {
         List<MeterCard> list = meterCardMapper.selectQualityMeters(query);
         enrichCards(list);
+        for (MeterCard card : list)
+        {
+            card.setQualityRiskCodes(resolveQualityRiskCodes(card));
+        }
+        if (query != null && Boolean.TRUE.equals(query.getRiskOnly()))
+        {
+            return list.stream().filter(card -> card.getQualityRiskCodes().length > 0).collect(Collectors.toList());
+        }
         return list;
+    }
+
+    @Override
+    public MeterQualityRiskStats getQualityRiskStats(MeterCard query)
+    {
+        if (query != null) query.setRiskOnly(false);
+        List<MeterCard> list = listQualityMeters(query);
+        MeterQualityRiskStats stats = new MeterQualityRiskStats();
+        stats.setTotalCount(list.size());
+        for (MeterCard card : list)
+        {
+            List<String> risks = Arrays.asList(card.getQualityRiskCodes());
+            if (!risks.isEmpty()) stats.setRiskCount(stats.getRiskCount() + 1);
+            if (risks.contains("STATUS_ABNORMAL")) stats.setStatusAbnormalCount(stats.getStatusAbnormalCount() + 1);
+            if (risks.contains("POWER_FACTOR_LOW")) stats.setPowerFactorLowCount(stats.getPowerFactorLowCount() + 1);
+            if (risks.contains("VOLTAGE_THD_EXCEEDED") || risks.contains("CURRENT_THD_EXCEEDED")) stats.setThdExceededCount(stats.getThdExceededCount() + 1);
+            if (risks.contains("VOLTAGE_UNBALANCE_EXCEEDED") || risks.contains("CURRENT_UNBALANCE_EXCEEDED")) stats.setUnbalanceExceededCount(stats.getUnbalanceExceededCount() + 1);
+        }
+        return stats;
     }
 
     @Override
@@ -129,6 +159,10 @@ public class MeterCardServiceImpl implements IMeterCardService
         if ("energy".equals(category))
         {
             points = meterCardMapper.selectEnergyHistoryTrend(query);
+        }
+        else if ("quality".equals(category))
+        {
+            points = meterCardMapper.selectQualityHistoryTrend(query);
         }
         else
         {
@@ -290,6 +324,34 @@ public class MeterCardServiceImpl implements IMeterCardService
             this.calendarField = calendarField;
             this.labelPattern = labelPattern;
         }
+    }
+
+    private String[] resolveQualityRiskCodes(MeterCard card)
+    {
+        List<String> risks = new ArrayList<>();
+        if (!"OK".equals(card.getStatusCode())) risks.add("STATUS_ABNORMAL");
+        if (isBelow(card.getPowerFactorTotal(), 0.85f)) risks.add("POWER_FACTOR_LOW");
+        if (isOutside(card.getVoltageA(), 198f, 242f) || isOutside(card.getVoltageB(), 198f, 242f) || isOutside(card.getVoltageC(), 198f, 242f)) risks.add("VOLTAGE_OUT_OF_RANGE");
+        if (isAbove(card.getVoltageThdA(), 5f) || isAbove(card.getVoltageThdB(), 5f) || isAbove(card.getVoltageThdC(), 5f)) risks.add("VOLTAGE_THD_EXCEEDED");
+        if (isAbove(card.getCurrentThdA(), 8f) || isAbove(card.getCurrentThdB(), 8f) || isAbove(card.getCurrentThdC(), 8f)) risks.add("CURRENT_THD_EXCEEDED");
+        if (isAbove(card.getVoltageUnbalance(), 2f)) risks.add("VOLTAGE_UNBALANCE_EXCEEDED");
+        if (isAbove(card.getCurrentUnbalance(), 3f)) risks.add("CURRENT_UNBALANCE_EXCEEDED");
+        return risks.toArray(new String[0]);
+    }
+
+    private boolean isBelow(Float value, float threshold)
+    {
+        return value != null && value < threshold;
+    }
+
+    private boolean isAbove(Float value, float threshold)
+    {
+        return value != null && value > threshold;
+    }
+
+    private boolean isOutside(Float value, float min, float max)
+    {
+        return value != null && (value < min || value > max);
     }
 
     private void enrichCards(List<MeterCard> list)

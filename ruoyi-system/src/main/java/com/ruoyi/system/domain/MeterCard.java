@@ -58,6 +58,8 @@ public class MeterCard
     private BigDecimal maxCurrentA;
     private String statusCode;
     private String statusText;
+    private Boolean riskOnly;
+    private String[] qualityRiskCodes;
 
     public Long getMeterId()
     {
@@ -537,5 +539,25 @@ public class MeterCard
     public void setStatusText(String statusText)
     {
         this.statusText = statusText;
+    }
+
+    public Boolean getRiskOnly()
+    {
+        return riskOnly;
+    }
+
+    public void setRiskOnly(Boolean riskOnly)
+    {
+        this.riskOnly = riskOnly;
+    }
+
+    public String[] getQualityRiskCodes()
+    {
+        return qualityRiskCodes;
+    }
+
+    public void setQualityRiskCodes(String[] qualityRiskCodes)
+    {
+        this.qualityRiskCodes = qualityRiskCodes;
     }
 }

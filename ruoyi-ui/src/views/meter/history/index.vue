@@ -22,6 +22,7 @@
     <el-tabs v-model="activeCategory" @tab-click="handleCategoryChange">
       <el-tab-pane label="运行快照" name="realtime" />
       <el-tab-pane label="电能读数" name="energy" />
+      <el-tab-pane label="电能质量" name="quality" />
     </el-tabs>
 
     <section class="trend-panel" v-loading="trendLoading">
@@ -73,7 +74,7 @@ export default {
   mixins: [resize],
   data() {
     return {
-      loading: false, trendLoading: false, optionsLoading: false, total: 0, historyList: [], trendPoints: [], meterOptions: [], selectedQuickRange: '', activeCategory: 'realtime', dateRange: [], primaryChart: null,
+      loading: false, trendLoading: false, optionsLoading: false, total: 0, historyList: [], trendPoints: [], meterOptions: [], selectedQuickRange: '', activeCategory: 'realtime', dateRange: [], primaryChart: null, trendRequestId: 0, trendRequestId: 0,
       queryParams: { pageNum: 1, pageSize: 20, meterId: undefined },
       pickerOptions: { disabledDate(time) { return time.getTime() > Date.now() } },
       quickRanges: [{ key: '1h', label: '近1小时', hours: 1 }, { key: '6h', label: '近6小时', hours: 6 }, { key: '24h', label: '近24小时', hours: 24 }, { key: '7d', label: '近7天', hours: 168 }, { key: '30d', label: '近30天', hours: 720 }]
@@ -126,7 +127,7 @@ export default {
     restoreQuery() {
       const { meterId, category, beginTime, endTime } = this.$route.query
       this.queryParams.meterId = meterId ? String(meterId) : undefined
-      this.activeCategory = category === 'energy' ? category : 'realtime'
+      this.activeCategory = ['energy', 'quality'].includes(category) ? category : 'realtime'
       this.dateRange = this.isValidDateRange([beginTime, endTime]) ? [beginTime, endTime] : []
       if (!this.dateRange.length) this.applyDefaultRange()
     },
@@ -149,17 +150,35 @@ export default {
     handleCategoryChange() { this.handleQuery() },
     handleQuery() { if (!this.canQuery) return; this.queryParams.pageNum = 1; this.loadTrend(); this.loadDetails(); this.syncQuery() },
     buildParams() { return { meterId: this.queryParams.meterId, beginTime: this.dateRange[0], endTime: this.dateRange[1] } },
-    loadTrend() { this.trendLoading = true; getHistoryTrend(this.activeCategory, this.buildParams()).then(response => { this.trendPoints = (response.data && response.data.points) || []; this.renderTrend() }).catch(() => { this.trendPoints = []; this.renderTrend() }).finally(() => { this.trendLoading = false }) },
+    loadTrend() {
+      const requestId = ++this.trendRequestId
+      this.trendLoading = true
+      this.trendPoints = []
+      this.renderTrend()
+      getHistoryTrend(this.activeCategory, this.buildParams()).then(response => {
+        if (requestId !== this.trendRequestId) return
+        this.trendPoints = (response.data && response.data.points) || []
+        this.renderTrend()
+      }).catch(() => {
+        if (requestId !== this.trendRequestId) return
+        this.trendPoints = []
+        this.renderTrend()
+      }).finally(() => {
+        if (requestId === this.trendRequestId) this.trendLoading = false
+      })
+    },
     loadDetails() { if (!this.canQuery) return; this.loading = true; const request = this.activeCategory === 'energy' ? listEnergyHistory : this.activeCategory === 'quality' ? listQualityHistory : listRealtimeHistory; request({ ...this.buildParams(), pageNum: this.queryParams.pageNum, pageSize: this.queryParams.pageSize }).then(response => { this.historyList = response.rows || []; this.total = response.total || 0 }).catch(() => { this.historyList = []; this.total = 0 }).finally(() => { this.loading = false }) },
     renderTrend() {
       if (!this.primaryChart) return
       const labels = this.trendPoints.map(item => item.dataCollectTime)
       const series = this.getSeries()
-      this.primaryChart.setOption({ tooltip: { trigger: 'axis', valueFormatter: value => value == null ? '--' : `${value} ${this.activeCategory === 'energy' ? 'kWh' : 'kW'}` }, legend: { top: 4, data: series.map(item => item.name) }, grid: { containLabel: true, left: 64, right: 32, top: 46, bottom: 54 }, xAxis: { type: 'category', data: labels, axisLabel: { color: '#718096', hideOverlap: true, formatter: value => value ? value.replace('T', ' ').slice(5, 16) : '--' }, axisLine: { lineStyle: { color: '#d9e2ec' } } }, yAxis: { type: 'value', name: this.activeCategory === 'energy' ? 'kWh' : 'kW', nameLocation: 'end', nameGap: 12, nameTextStyle: { color: '#718096' }, axisLabel: { color: '#718096' }, splitLine: { lineStyle: { color: '#edf2f7' } } }, series }, true)
+      const unit = this.activeCategory === 'energy' ? 'kWh' : this.activeCategory === 'quality' ? '%' : 'kW'
+      this.primaryChart.setOption({ tooltip: { trigger: 'axis', valueFormatter: value => value == null ? '--' : `${value} ${unit}` }, legend: { top: 4, data: series.map(item => item.name) }, grid: { containLabel: true, left: 64, right: 32, top: 46, bottom: 54 }, xAxis: { type: 'category', data: labels, axisLabel: { color: '#718096', hideOverlap: true, formatter: value => value ? value.replace('T', ' ').slice(5, 16) : '--' }, axisLine: { lineStyle: { color: '#d9e2ec' } } }, yAxis: { type: 'value', name: unit, nameLocation: 'end', nameGap: 12, nameTextStyle: { color: '#718096' }, axisLabel: { color: '#718096' }, splitLine: { lineStyle: { color: '#edf2f7' } } }, series }, true)
     },
     getSeries() {
       const line = (name, data, color) => ({ name, type: 'line', smooth: true, connectNulls: false, symbol: 'none', lineStyle: { width: 2, color }, data })
       if (this.activeCategory === 'energy') return [line('正向有功累计 kWh', this.trendPoints.map(item => item.forwardActiveEnergy), '#1677a8')]
+      if (this.activeCategory === 'quality') return [line('功率因数', this.trendPoints.map(item => item.powerFactorTotal), '#1677a8'), line('电压 THD A', this.trendPoints.map(item => item.voltageThdA), '#d98b1d'), line('电流 THD A', this.trendPoints.map(item => item.currentThdA), '#c94747'), line('电压不平衡', this.trendPoints.map(item => item.voltageUnbalance), '#6c63b5'), line('电流不平衡', this.trendPoints.map(item => item.currentUnbalance), '#2f9e6f')]
       return [line('总有功功率 kW', this.trendPoints.map(item => this.toKilowatts(item.activePowerTotal)), '#1677a8')]
     },
     syncQuery() {

@@ -14,6 +14,8 @@ public interface MeterCardMapper
 
     public List<MeterCard> selectEnergyHistoryTrend(MeterCard query);
 
+    public List<MeterCard> selectQualityHistoryTrend(MeterCard query);
+
     public List<MeterCard> selectRealtimeMeters(MeterCard query);
 
     public List<MeterCard> selectEnergyMeters(MeterCard query);

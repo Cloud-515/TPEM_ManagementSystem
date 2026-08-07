@@ -2,15 +2,15 @@
   <div class="app-container alarm-record-page" v-loading="loading">
     <div class="page-heading">
       <div>
-        <h1>报警记录</h1>
+        <h1>设备告警状态</h1>
         <p>查看当前设备报警状态及设备运行详情</p>
       </div>
-      <el-button icon="el-icon-back" @click="$router.back()">返回</el-button>
+      <el-button icon="el-icon-back" @click="returnToSource">{{ $route.query.from === 'exceptions' ? '返回异常设备' : '返回实时运行' }}</el-button>
     </div>
 
     <el-card class="record-card" shadow="never">
       <div slot="header" class="section-header">
-        <span>报警记录</span>
+        <span>设备告警状态</span>
         <el-tag v-if="record" :type="statusType(record.statusCode)" size="small">{{ record.statusText }}</el-tag>
       </div>
       <el-table v-if="record" :data="[record]" border>
@@ -62,7 +62,7 @@ import { getMeterStatusLabel, meterStatusMeta } from '@/views/meter/components/m
 export default {
   name: 'MeterAlarmRecord',
   data() {
-    return { loading: false, detail: null, emptyMessage: '暂无报警记录' }
+    return { loading: false, detail: null, emptyMessage: '暂无告警状态' }
   },
   computed: {
     record() {
@@ -78,6 +78,9 @@ export default {
   },
   created() { this.loadDetail() },
   methods: {
+    returnToSource() {
+      this.$router.push({ name: this.$route.query.from === 'exceptions' ? 'MeterExceptionDevices' : 'MeterRealtime' })
+    },
     async loadDetail() {
       const meterId = this.$route.query.meterId
       if (!meterId) { this.emptyMessage = '缺少设备信息'; return }
@@ -88,7 +91,7 @@ export default {
         if (!this.detail || !this.detail.meterId) this.emptyMessage = '未找到对应设备'
         else if (this.detail.statusCode === 'OK') this.emptyMessage = '该设备当前没有报警或故障'
       } catch (error) {
-        this.emptyMessage = '报警记录加载失败'
+        this.emptyMessage = '告警状态加载失败'
       } finally { this.loading = false }
     },
     statusType(code) { return (meterStatusMeta[code] || {}).type || 'info' },

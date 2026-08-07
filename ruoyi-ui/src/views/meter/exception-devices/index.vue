@@ -5,7 +5,7 @@
         <h1>异常设备</h1>
         <p>展示当前采集状态异常的全部设备</p>
       </div>
-      <el-button icon="el-icon-refresh" :loading="loading" @click="loadDevices">刷新</el-button>
+      <div><el-button @click="$router.push({ name: 'MeterRealtime' })">返回实时运行</el-button><el-button icon="el-icon-refresh" :loading="loading" @click="loadDevices">刷新</el-button></div>
     </div>
 
     <el-card shadow="never">
@@ -64,7 +64,7 @@ export default {
     getMeterStatusLabel(code) { return getMeterStatusLabel(code) },
     formatNumber(value) { return formatMeterNumber(value) },
     openRecord(device) {
-      if (device && device.meterId) this.$router.push({ name: 'MeterAlarmRecord', query: { meterId: device.meterId } })
+      if (device && device.meterId) this.$router.push({ name: 'MeterAlarmRecord', query: { meterId: device.meterId, from: 'exceptions' } })
     }
   }
 }

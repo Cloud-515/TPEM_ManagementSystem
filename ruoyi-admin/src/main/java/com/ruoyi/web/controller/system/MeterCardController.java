@@ -17,6 +17,8 @@ import com.ruoyi.common.enums.BusinessType;
 import com.ruoyi.common.utils.poi.ExcelUtil;
 import com.ruoyi.system.domain.MeterCard;
 import com.ruoyi.system.domain.MeterTopologyLayout;
+import com.ruoyi.system.domain.MeterQualityRiskStats;
+import com.ruoyi.system.domain.MeterQualityRiskStats;
 import com.ruoyi.system.service.IMeterCardService;
 import com.ruoyi.system.service.IMeterTopologyService;
 
@@ -72,10 +74,29 @@ public class MeterCardController extends BaseController
     }
 
     @GetMapping("/quality/page")
-    public TableDataInfo qualityPage(MeterCard query)
+    public TableDataInfo qualityPage(MeterCard query,
+        @RequestParam(defaultValue = "1") int pageNum,
+        @RequestParam(defaultValue = "20") int pageSize)
     {
-        startPage();
-        return getDataTable(meterCardService.listQualityMeters(query));
+        java.util.List<MeterCard> list = meterCardService.listQualityMeters(query);
+        pageNum = Math.max(pageNum, 1);
+        pageSize = Math.max(pageSize, 1);
+        int fromIndex = Math.min((pageNum - 1) * pageSize, list.size());
+        int toIndex = Math.min(fromIndex + pageSize, list.size());
+        TableDataInfo result = new TableDataInfo();
+        result.setCode(200);
+        result.setMsg("查询成功");
+        result.setRows(list.subList(fromIndex, toIndex));
+        result.setTotal(list.size());
+        return result;
+    }
+
+    @GetMapping("/quality/stats")
+    public AjaxResult qualityStats(MeterCard query)
+    {
+        query.setRiskOnly(false);
+        MeterQualityRiskStats stats = meterCardService.getQualityRiskStats(query);
+        return success(stats);
     }
 
     @GetMapping("/history/{category}/trend")

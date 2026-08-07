@@ -5,6 +5,7 @@ import java.util.Map;
 import com.ruoyi.system.domain.MeterCard;
 import com.ruoyi.system.domain.MeterEnergyTrendPoint;
 import com.ruoyi.system.domain.MeterHistoryTrend;
+import com.ruoyi.system.domain.MeterQualityRiskStats;
 
 public interface IMeterCardService
 {
@@ -15,6 +16,8 @@ public interface IMeterCardService
     public List<MeterCard> listEnergyMeters(MeterCard query);
 
     public List<MeterCard> listQualityMeters(MeterCard query);
+
+    public MeterQualityRiskStats getQualityRiskStats(MeterCard query);
 
     public List<MeterCard> listRealtimeHistory(MeterCard query);
 

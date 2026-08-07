@@ -1,6 +1,12 @@
 <template>
   <el-drawer :title="detail.meterName || '设备详情'" :visible.sync="visible" size="680px" append-to-body>
     <div v-loading="loading" class="detail-content">
+      <div v-if="detail && detail.meterId" class="detail-navigation">
+        <el-button type="text" size="mini" @click="openPage('MeterEnergy')">能耗分析</el-button>
+        <el-button type="text" size="mini" @click="openPage('MeterQuality')">电能质量</el-button>
+        <el-button type="text" size="mini" @click="openPage('MeterHistory', 'quality')">质量历史</el-button>
+        <el-button type="text" size="mini" @click="openPage('MeterHistory')">历史追溯</el-button>
+      </div>
       <el-tabs v-model="activeTab">
         <el-tab-pane label="实时运行" name="running">
           <el-descriptions :column="2" border size="small">
@@ -58,11 +64,18 @@ export default {
       this.visible = true
       this.loading = true
       getRealtimeDetail(meterId).then(response => { this.detail = response.data || {} }).catch(() => { this.detail = {} }).finally(() => { this.loading = false })
+    },
+    openPage(name, category) {
+      if (!this.detail.meterId) return
+      this.visible = false
+      const query = { meterId: this.detail.meterId }
+      if (category) query.category = category
+      this.$router.push({ name, query })
     }
   }
 }
 </script>
 
 <style scoped>
-.detail-content { padding: 0 20px 24px; }.tab-detail { margin-top: 16px; }
+.detail-content { padding: 0 20px 24px; }.detail-navigation { display: flex; justify-content: flex-end; gap: 8px; padding-top: 8px; }.tab-detail { margin-top: 16px; }
 </style>

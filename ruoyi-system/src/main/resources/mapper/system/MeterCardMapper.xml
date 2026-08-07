@@ -104,8 +104,14 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         <if test="siteCode != null and siteCode != ''">
             AND s.site_code LIKE CONCAT('%', #{siteCode}, '%')
         </if>
+        <if test="siteName != null and siteName != ''">
+            AND s.site_name LIKE CONCAT('%', #{siteName}, '%')
+        </if>
         <if test="boxCode != null and boxCode != ''">
             AND b.box_code LIKE CONCAT('%', #{boxCode}, '%')
+        </if>
+        <if test="boxName != null and boxName != ''">
+            AND b.box_name LIKE CONCAT('%', #{boxName}, '%')
         </if>
     </sql>
 
@@ -174,33 +180,57 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
     </select>
 
     <select id="selectRealtimeHistoryTrend" parameterType="MeterCard" resultMap="MeterCardResult">
-        SELECT
-            h.collect_time AS data_collect_time,
-            h.collect_time AS last_collect_time,
-            h.voltage_a, h.voltage_b, h.voltage_c,
-            h.current_a, h.current_b, h.current_c,
-            h.active_power_total, h.reactive_power_total,
-            h.apparent_power_total, h.power_factor_total, h.frequency
-        FROM meter_realtime_history h
-        WHERE h.meter_id = #{meterId}
-          AND h.collect_time <![CDATA[>=]]> #{beginTime}
-          AND h.collect_time <![CDATA[<=]]> #{endTime}
-        ORDER BY h.collect_time
-        LIMIT 240
+        SELECT * FROM (
+            SELECT
+                h.collect_time AS data_collect_time,
+                h.collect_time AS last_collect_time,
+                h.voltage_a, h.voltage_b, h.voltage_c,
+                h.current_a, h.current_b, h.current_c,
+                h.active_power_total, h.reactive_power_total,
+                h.apparent_power_total, h.power_factor_total, h.frequency
+            FROM meter_realtime_history h
+            WHERE h.meter_id = #{meterId}
+              AND h.collect_time <![CDATA[>=]]> #{beginTime}
+              AND h.collect_time <![CDATA[<=]]> #{endTime}
+            ORDER BY h.collect_time DESC
+            LIMIT 240
+        ) trend_points
+        ORDER BY data_collect_time
     </select>
 
     <select id="selectEnergyHistoryTrend" parameterType="MeterCard" resultMap="MeterCardResult">
-        SELECT
-            h.collect_time AS data_collect_time,
-            h.collect_time AS last_collect_time,
-            h.forward_active_energy, h.reverse_active_energy,
-            h.forward_reactive_energy, h.reverse_reactive_energy
-        FROM meter_energy_history h
-        WHERE h.meter_id = #{meterId}
-          AND h.collect_time <![CDATA[>=]]> #{beginTime}
-          AND h.collect_time <![CDATA[<=]]> #{endTime}
-        ORDER BY h.collect_time
-        LIMIT 240
+        SELECT * FROM (
+            SELECT
+                h.collect_time AS data_collect_time,
+                h.collect_time AS last_collect_time,
+                h.forward_active_energy, h.reverse_active_energy,
+                h.forward_reactive_energy, h.reverse_reactive_energy
+            FROM meter_energy_history h
+            WHERE h.meter_id = #{meterId}
+              AND h.collect_time <![CDATA[>=]]> #{beginTime}
+              AND h.collect_time <![CDATA[<=]]> #{endTime}
+            ORDER BY h.collect_time DESC
+            LIMIT 240
+        ) trend_points
+        ORDER BY data_collect_time
+    </select>
+
+    <select id="selectQualityHistoryTrend" parameterType="MeterCard" resultMap="MeterCardResult">
+        SELECT * FROM (
+            SELECT
+                h.collect_time AS data_collect_time,
+                h.collect_time AS last_collect_time,
+                h.current_thd_a, h.current_thd_b, h.current_thd_c,
+                h.voltage_thd_a, h.voltage_thd_b, h.voltage_thd_c,
+                h.voltage_unbalance, h.current_unbalance
+            FROM meter_power_quality_history h
+            WHERE h.meter_id = #{meterId}
+              AND h.collect_time <![CDATA[>=]]> #{beginTime}
+              AND h.collect_time <![CDATA[<=]]> #{endTime}
+            ORDER BY h.collect_time DESC
+            LIMIT 240
+        ) trend_points
+        ORDER BY data_collect_time
     </select>
 
     <select id="selectRealtimeHistory" parameterType="MeterCard" resultMap="MeterCardResult">

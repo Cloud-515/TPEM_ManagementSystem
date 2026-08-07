@@ -7,6 +7,8 @@ import {
   simulatedHistoryTrend,
   simulatedMeterCardsResponse,
   simulatedMeterListResponse,
+  simulatedQualityMeterListResponse,
+  simulatedQualityMeterStats,
   simulatedMeterResponse,
   simulatedMeterTopologyResponse,
   saveSimulatedMeterTopology
@@ -45,7 +47,12 @@ export function listEnergyMeters(query) {
 }
 
 export function listQualityMeters(query) {
-  return requestPage('/system/meter/quality/page', query, simulatedMeterListResponse)
+  return requestPage('/system/meter/quality/page', query, simulatedQualityMeterListResponse)
+}
+
+export function getQualityMeterStats(query) {
+  const mock = simulated(() => simulatedQualityMeterStats(query))
+  return mock || request({ url: '/system/meter/quality/stats', method: 'get', params: query })
 }
 
 export function getHistoryTrend(category, query) {

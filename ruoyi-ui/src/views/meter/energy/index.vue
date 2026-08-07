@@ -7,7 +7,7 @@
 
     <el-form size="small" :inline="true" class="filter-form">
       <el-form-item label="分析设备">
-        <el-select v-model="meterId" filterable clearable placeholder="请选择设备" :disabled="simulationMode" @change="loadAnalysis">
+        <el-select v-model="meterId" filterable clearable placeholder="请选择设备" @change="handleMeterChange">
           <el-option v-for="meter in meterOptions" :key="meter.meterId" :label="meter.meterName + ' (' + meter.meterCode + ')'" :value="meter.meterId" />
         </el-select>
       </el-form-item>
@@ -15,11 +15,10 @@
       <el-form-item><el-button type="primary" icon="el-icon-search" :disabled="!meterId" @click="loadAnalysis">分析</el-button></el-form-item>
     </el-form>
 
-    <el-alert v-if="simulationMode" title="模拟模式已开启，当前分析设备已锁定为模拟观测电表。" type="info" :closable="false" show-icon />
-    <el-alert v-else-if="analysisError" :title="analysisError" type="warning" :closable="false" show-icon />
+    <el-alert v-if="analysisError" :title="analysisError" type="warning" :closable="false" show-icon />
 
     <el-row :gutter="16" class="kpi-row">
-      <el-col v-for="item in energyKpis" :key="item.label" :xs="12" :md="4"><div class="energy-kpi"><span>{{ item.label }}</span><strong>{{ item.value }}</strong><small>{{ item.unit }}</small></div></el-col>
+      <el-col v-for="item in energyKpis" :key="item.label" :xs="12" :md="4"><div class="energy-kpi"><span>{{ item.label }}</span><el-tooltip :content="item.fullValue" placement="top" :disabled="!item.fullValue"><div class="energy-value"><strong>{{ item.value }}</strong><small>{{ item.unit }}</small></div></el-tooltip></div></el-col>
     </el-row>
 
     <section class="chart-panel">
@@ -46,7 +45,6 @@
 import * as echarts from 'echarts'
 import resize from '@/views/dashboard/mixins/resize'
 import { getHistoryTrend, listMeterCards } from '@/api/system/meter'
-import { isMeterSimulationEnabled } from '@/utils/meter-simulation'
 import RealtimeDetail from '../components/realtime-detail'
 import { formatMeterNumber } from '../components/meter-utils'
 
@@ -60,7 +58,7 @@ export default {
   components: { RealtimeDetail },
   mixins: [resize],
   data() {
-    return { analysisLoading: false, simulationMode: isMeterSimulationEnabled(), meterOptions: [], meterId: undefined, dateRange: [], rangePreset: '24h', selectedMeter: null, energyPoints: [], powerPoints: [], powerChart: null, analysisError: '' }
+    return { analysisLoading: false, meterOptions: [], meterId: undefined, dateRange: [], rangePreset: '24h', selectedMeter: null, energyPoints: [], powerPoints: [], powerChart: null, analysisError: '' }
   },
   computed: {
     energyKpis() {
@@ -70,17 +68,27 @@ export default {
       const end = values.length ? values[values.length - 1] : null
       const peak = powers.length ? Math.max(...powers) : null
       const average = powers.length ? powers.reduce((sum, value) => sum + value, 0) / powers.length : null
+      const compactEnergy = value => {
+        if (!Number.isFinite(value)) return { value: '--', unit: 'kWh', fullValue: '' }
+        if (Math.abs(value) >= 1000000) return { value: this.formatMeterNumber(value / 1000000, 2), unit: 'GWh', fullValue: `${this.formatMeterNumber(value)} kWh` }
+        if (Math.abs(value) >= 10000) return { value: this.formatMeterNumber(value / 10000, 2), unit: '万 kWh', fullValue: `${this.formatMeterNumber(value)} kWh` }
+        return { value: this.formatMeterNumber(value), unit: 'kWh', fullValue: `${this.formatMeterNumber(value)} kWh` }
+      }
+      const startEnergy = compactEnergy(start)
+      const endEnergy = compactEnergy(end)
+      const intervalEnergy = compactEnergy(start === null || end === null ? null : Math.max(0, end - start))
       return [
-        { label: '起始累计电能', value: this.formatMeterNumber(start), unit: 'kWh' },
-        { label: '结束累计电能', value: this.formatMeterNumber(end), unit: 'kWh' },
-        { label: '区间用电量', value: this.formatMeterNumber(start === null || end === null ? null : Math.max(0, end - start)), unit: 'kWh' },
-        { label: '峰值功率', value: this.formatMeterNumber(peak), unit: 'kW' },
-        { label: '平均功率', value: this.formatMeterNumber(average), unit: 'kW' },
-        { label: '有效功率点', value: powers.length || '--', unit: '个' }
+        { label: '起始累计电能', ...startEnergy },
+        { label: '结束累计电能', ...endEnergy },
+        { label: '区间用电量', ...intervalEnergy },
+        { label: '峰值功率', value: this.formatMeterNumber(peak), unit: 'kW', fullValue: '' },
+        { label: '平均功率', value: this.formatMeterNumber(average), unit: 'kW', fullValue: '' },
+        { label: '有效功率点', value: powers.length || '--', unit: '个', fullValue: '' }
       ]
     }
   },
-  mounted() { this.powerChart = echarts.init(this.$refs.powerChart); this.applyPreset() },
+  mounted() { this.powerChart = echarts.init(this.$refs.powerChart); this.meterId = this.$route.query.meterId ? Number(this.$route.query.meterId) : undefined; this.applyPreset() },
+  watch: { '$route.query.meterId'(meterId) { if (meterId) { this.meterId = Number(meterId); this.loadAnalysis() } } },
   beforeDestroy() { if (this.powerChart) this.powerChart.dispose() },
   methods: {
     formatMeterNumber,
@@ -92,10 +100,16 @@ export default {
       this.loadMeters()
     },
     handleDateRangeChange() { this.rangePreset = ''; this.loadAnalysis() },
+    handleMeterChange() {
+      const query = { ...this.$route.query }
+      if (this.meterId) query.meterId = this.meterId
+      else delete query.meterId
+      this.$router.replace({ name: 'MeterEnergy', query })
+      this.loadAnalysis()
+    },
     loadMeters() {
       listMeterCards().then(response => {
         const data = response.data || {}; this.meterOptions = [...(data.dashboard || []), ...(data.toolbar || [])]
-        if (this.simulationMode && this.meterOptions.length) this.meterId = this.meterOptions[0].meterId
         if (!this.meterId && this.meterOptions.length) this.meterId = this.meterOptions[0].meterId
         this.loadAnalysis()
       }).catch(() => { this.meterOptions = []; this.meterId = undefined; this.selectedMeter = null; this.analysisError = '无法加载设备列表' })
@@ -133,9 +147,11 @@ export default {
 .page-heading p, .panel-header p, .unit-label { margin: 6px 0 0; color: #718096; font-size: 13px; }
 .filter-form { margin: 20px 0 12px; }
 .kpi-row { margin: 16px 0; }
-.energy-kpi { min-height: 104px; padding: 20px; background: #fff; border: 1px solid #e6edf3; border-radius: 6px; }
-.energy-kpi span, .energy-kpi small { color: #718096; display: block; font-size: 13px; }
-.energy-kpi strong { display: inline-block; margin: 10px 6px 0 0; color: #243b53; font-size: 24px; }
+.energy-kpi { min-height: 104px; padding: 20px; overflow: hidden; background: #fff; border: 1px solid #e6edf3; border-radius: 6px; }
+.energy-kpi span { display: block; color: #718096; font-size: 13px; }
+.energy-value { display: flex; align-items: baseline; gap: 6px; margin-top: 10px; cursor: default; white-space: nowrap; }
+.energy-kpi strong { color: #243b53; font-family: Consolas, Monaco, monospace; font-size: clamp(18px, 2vw, 24px); font-variant-numeric: tabular-nums; line-height: 1.25; }
+.energy-kpi small { flex: 0 0 auto; color: #718096; font-size: 13px; }
 .chart-panel { position: relative; padding: 20px; background: #fff; border: 1px solid #e6edf3; border-radius: 6px; }
 .trend-chart { height: 320px; }
 .chart-empty { position: absolute; inset: 100px 0 0; text-align: center; color: #718096; }

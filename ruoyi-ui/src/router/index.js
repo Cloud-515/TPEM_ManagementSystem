@@ -116,14 +116,14 @@ export const constantRoutes = [
         component: () => import('@/views/meter/alarm-record'),
         name: 'MeterAlarmRecord',
         hidden: true,
-        meta: { title: '报警记录', activeMenu: '/index' }
+        meta: { title: '设备告警状态', activeMenu: '/meter/realtime' }
       },
       {
         path: 'exception-devices',
         component: () => import('@/views/meter/exception-devices'),
         name: 'MeterExceptionDevices',
         hidden: true,
-        meta: { title: '异常设备', activeMenu: '/index' }
+        meta: { title: '异常设备', activeMenu: '/meter/realtime' }
       }
     ]
   },

@@ -8,7 +8,7 @@
       <el-form-item label="箱体"><el-input v-model="queryParams.boxName" placeholder="请输入箱体" clearable @keyup.enter.native="handleQuery" /></el-form-item>
       <el-form-item><el-button type="primary" icon="el-icon-search" @click="handleQuery">搜索</el-button><el-button icon="el-icon-refresh" @click="resetQuery">重置</el-button></el-form-item>
     </el-form>
-    <el-table v-loading="loading" :data="filteredList" border :empty-text="showAll ? '暂无电能质量数据' : '当前没有识别到质量风险设备'">
+    <el-table v-loading="loading" :data="meterList" border :empty-text="showAll ? '暂无电能质量数据' : '当前没有识别到质量风险设备'">
       <el-table-column label="设备名称" prop="meterName" min-width="160" show-overflow-tooltip />
       <el-table-column label="位置" min-width="180"><template slot-scope="scope">{{ scope.row.siteName || '--' }} / {{ scope.row.boxName || '--' }}</template></el-table-column>
       <el-table-column label="风险类型" width="145"><template slot-scope="scope"><el-tag size="mini" :type="riskTagType(scope.row)">{{ riskLabel(scope.row) }}</el-tag></template></el-table-column>
@@ -25,39 +25,62 @@
 </template>
 
 <script>
-import { listQualityMeters } from '@/api/system/meter'
+import { listQualityMeters, getQualityMeterStats } from '@/api/system/meter'
 import RealtimeDetail from '../components/realtime-detail'
-import { formatMeterNumber } from '../components/meter-utils'
+import { formatMeterNumber, getMeterQualityRisks } from '../components/meter-utils'
 
 export default {
   name: 'MeterQuality', components: { RealtimeDetail },
-  data() { return { loading: false, total: 0, meterList: [], showAll: false, queryParams: { pageNum: 1, pageSize: 20, meterName: undefined, siteName: undefined, boxName: undefined } } },
+  data() {
+    const showAll = this.$route.query.showAll === 'true'
+    return { loading: false, total: 0, meterList: [], showAll, stats: {}, queryParams: { pageNum: 1, pageSize: 20, meterName: undefined, siteName: undefined, boxName: undefined, riskOnly: !showAll } }
+  },
   computed: {
-    filteredList() { return this.showAll ? this.meterList : this.meterList.filter(item => item.statusCode === 'VOLTAGE_BAD' || item.statusCode === 'PF_LOW') },
     riskKpis() {
-      const list = this.meterList
       return [
-        { label: '电压异常', value: list.filter(item => item.statusCode === 'VOLTAGE_BAD').length, type: 'danger' },
-        { label: '功率因数低', value: list.filter(item => item.statusCode === 'PF_LOW').length, type: 'warning' },
-        { label: 'THD 待评估', value: list.filter(item => this.hasThd(item)).length, type: 'warning' },
-        { label: '不平衡待评估', value: list.filter(item => Number(item.voltageUnbalance) > 0 || Number(item.currentUnbalance) > 0).length, type: 'info' }
+        { label: '状态异常', value: this.stats.statusAbnormalCount || 0, type: 'danger' },
+        { label: '功率因数低', value: this.stats.powerFactorLowCount || 0, type: 'warning' },
+        { label: 'THD 超限', value: this.stats.thdExceededCount || 0, type: 'warning' },
+        { label: '不平衡超限', value: this.stats.unbalanceExceededCount || 0, type: 'info' }
       ]
     }
   },
   created() { this.getList() },
+  mounted() { if (this.$route.query.meterId) this.openRouteMeter(this.$route.query.meterId) },
+  watch: { '$route.query.meterId'(meterId) { if (meterId) this.openRouteMeter(meterId) } },
   methods: {
     formatMeterNumber,
-    hasRisk(item) { return item.statusCode === 'VOLTAGE_BAD' || item.statusCode === 'PF_LOW' },
-    hasThd(item) {
-      return ['voltageThdA', 'voltageThdB', 'voltageThdC', 'currentThdA', 'currentThdB', 'currentThdC']
-        .some(field => Number.isFinite(Number(item[field])) && Number(item[field]) > 0)
+    hasRisk(item) { return getMeterQualityRisks(item).length > 0 },
+    riskLabel(item) { return getMeterQualityRisks(item).join('、') || '正常' },
+    riskTagType(item) { return getMeterQualityRisks(item).some(risk => risk === '设备状态异常' || risk === '电压越限') ? 'danger' : getMeterQualityRisks(item).length ? 'warning' : 'success' },
+    getList() {
+      this.loading = true
+      const statsQuery = { meterName: this.queryParams.meterName, siteName: this.queryParams.siteName, boxName: this.queryParams.boxName }
+      Promise.all([listQualityMeters(this.queryParams), getQualityMeterStats(statsQuery)]).then(([response, statsResponse]) => {
+        this.meterList = response.rows || []
+        this.total = response.total || 0
+        this.stats = statsResponse.data || statsResponse || {}
+      }).catch(() => {
+        this.meterList = []
+        this.total = 0
+        this.stats = {}
+      }).finally(() => { this.loading = false })
     },
-    riskLabel(item) { if (item.statusCode === 'VOLTAGE_BAD') return '电压异常'; if (item.statusCode === 'PF_LOW') return '功率因数低'; return '待评估' },
-    riskTagType(item) { return item.statusCode === 'VOLTAGE_BAD' ? 'danger' : item.statusCode === 'PF_LOW' ? 'warning' : 'info' },
-    getList() { this.loading = true; listQualityMeters(this.queryParams).then(response => { this.meterList = response.rows || []; this.total = response.total || 0 }).catch(() => { this.meterList = []; this.total = 0 }).finally(() => { this.loading = false }) },
-    handleQuery() { this.queryParams.pageNum = 1; this.getList() },
+    handleQuery() {
+      this.queryParams.riskOnly = !this.showAll
+      this.queryParams.pageNum = 1
+      const query = { ...this.$route.query }
+      if (this.showAll) query.showAll = 'true'
+      else delete query.showAll
+      this.$router.replace({ name: 'MeterQuality', query })
+      this.getList()
+    },
     resetQuery() { this.resetForm('queryForm'); this.handleQuery() },
-    showDetail(row) { this.$refs.detail.open(row.meterId, 'quality') }
+    showDetail(row) {
+      this.$router.replace({ name: 'MeterQuality', query: { ...this.$route.query, meterId: row.meterId } })
+      this.$refs.detail.open(row.meterId, 'quality')
+    },
+    openRouteMeter(meterId) { this.$nextTick(() => this.$refs.detail.open(Number(meterId), 'quality')) }
   }
 }
 </script>
