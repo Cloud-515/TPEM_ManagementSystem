@@ -7,7 +7,9 @@ import {
   simulatedHistoryTrend,
   simulatedMeterCardsResponse,
   simulatedMeterListResponse,
-  simulatedMeterResponse
+  simulatedMeterResponse,
+  simulatedMeterTopologyResponse,
+  saveSimulatedMeterTopology
 } from '@/utils/meter-simulation'
 
 function simulated(response) {
@@ -15,7 +17,7 @@ function simulated(response) {
 }
 
 function requestPage(url, query, response) {
-  const mock = simulated(response)
+  const mock = simulated(() => response(query))
   return mock || request({ url, method: 'get', params: query })
 }
 
@@ -52,15 +54,15 @@ export function getHistoryTrend(category, query) {
 }
 
 export function listRealtimeHistory(query) {
-  return requestPage('/system/meter/history/realtime/page', query, () => simulatedHistoryList('realtime', query))
+  return requestPage('/system/meter/history/realtime/page', query, params => simulatedHistoryList('realtime', params))
 }
 
 export function listEnergyHistory(query) {
-  return requestPage('/system/meter/history/energy/page', query, () => simulatedHistoryList('energy', query))
+  return requestPage('/system/meter/history/energy/page', query, params => simulatedHistoryList('energy', params))
 }
 
 export function listQualityHistory(query) {
-  return requestPage('/system/meter/history/quality/page', query, () => simulatedHistoryList('quality', query))
+  return requestPage('/system/meter/history/quality/page', query, params => simulatedHistoryList('quality', params))
 }
 
 export function getMeterRealtimeHistory(meterId, query) {
@@ -76,6 +78,16 @@ export function getMeterQualityHistory(meterId, query) {
 }
 
 export function getRealtimeDetail(meterId) {
-  const mock = simulated(simulatedMeterResponse)
+  const mock = simulated(() => simulatedMeterResponse(meterId))
   return mock || request({ url: `/system/meter/realtime/detail/${meterId}`, method: 'get' })
+}
+
+export function getMeterTopology() {
+  const mock = simulated(simulatedMeterTopologyResponse)
+  return mock || request({ url: '/system/meter/topology', method: 'get' })
+}
+
+export function saveMeterTopology(data) {
+  if (isMeterSimulationEnabled()) return Promise.resolve(saveSimulatedMeterTopology(data))
+  return request({ url: '/system/meter/topology', method: 'put', data })
 }

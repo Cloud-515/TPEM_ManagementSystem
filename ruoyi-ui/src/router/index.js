@@ -106,6 +106,12 @@ export const constantRoutes = [
         meta: { title: '历史追溯', icon: 'date' }
       },
       {
+        path: 'topology',
+        component: () => import('@/views/meter/topology'),
+        name: 'MeterTopology',
+        meta: { title: '设备拓扑图', icon: 'guide' }
+      },
+      {
         path: 'alarm-record',
         component: () => import('@/views/meter/alarm-record'),
         name: 'MeterAlarmRecord',

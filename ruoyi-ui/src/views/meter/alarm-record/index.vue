@@ -85,7 +85,8 @@ export default {
       try {
         const response = await getRealtimeDetail(meterId)
         this.detail = response.data || response
-        if (!this.detail || this.detail.statusCode === 'OK') this.emptyMessage = '该设备当前没有报警或故障'
+        if (!this.detail || !this.detail.meterId) this.emptyMessage = '未找到对应设备'
+        else if (this.detail.statusCode === 'OK') this.emptyMessage = '该设备当前没有报警或故障'
       } catch (error) {
         this.emptyMessage = '报警记录加载失败'
       } finally { this.loading = false }
