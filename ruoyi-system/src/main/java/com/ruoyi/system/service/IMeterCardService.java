@@ -3,6 +3,8 @@ package com.ruoyi.system.service;
 import java.util.List;
 import java.util.Map;
 import com.ruoyi.system.domain.MeterCard;
+import com.ruoyi.system.domain.MeterEnergyAnalysis;
+import com.ruoyi.system.domain.MeterEnergyAnalysis;
 import com.ruoyi.system.domain.MeterEnergyTrendPoint;
 import com.ruoyi.system.domain.MeterHistoryTrend;
 import com.ruoyi.system.domain.MeterQualityRiskStats;
@@ -30,4 +32,6 @@ public interface IMeterCardService
     public List<MeterEnergyTrendPoint> getEnergyTrend(String range);
 
     public MeterHistoryTrend getHistoryTrend(String category, MeterCard query);
+
+    public MeterEnergyAnalysis getEnergyAnalysis(MeterCard query);
 }

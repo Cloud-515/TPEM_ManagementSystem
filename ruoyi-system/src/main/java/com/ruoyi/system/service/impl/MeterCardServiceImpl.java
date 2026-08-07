@@ -18,6 +18,8 @@ import com.ruoyi.system.domain.MeterEnergyReading;
 import com.ruoyi.system.domain.MeterHistoryTrend;
 import com.ruoyi.system.domain.MeterQualityRiskStats;
 import com.ruoyi.system.domain.MeterEnergyTrendPoint;
+import com.ruoyi.system.domain.MeterEnergyAnalysis;
+import com.ruoyi.system.domain.MeterEnergyRangeSummary;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import com.ruoyi.system.domain.MeterCard;
@@ -189,6 +191,44 @@ public class MeterCardServiceImpl implements IMeterCardService
         {
             throw new IllegalArgumentException("结束时间不能晚于当前时间");
         }
+    }
+
+    @Override
+    public MeterEnergyAnalysis getEnergyAnalysis(MeterCard query)
+    {
+        validateHistoryTrendQuery(query);
+        MeterEnergyRangeSummary summary = new MeterEnergyRangeSummary();
+        Long validReadingCount = meterCardMapper.countForwardActiveEnergyReadings(query);
+        BigDecimal start = meterCardMapper.selectFirstForwardActiveEnergy(query);
+        BigDecimal end = meterCardMapper.selectLastForwardActiveEnergy(query);
+        summary.setValidReadingCount(validReadingCount == null ? 0L : validReadingCount);
+        summary.setStartForwardActiveEnergy(start);
+        summary.setEndForwardActiveEnergy(end);
+        if (summary.getValidReadingCount() == 0)
+        {
+            summary.setValid(false);
+            summary.setReason("NO_ENERGY_READINGS");
+        }
+        else if (summary.getValidReadingCount() < 2)
+        {
+            summary.setValid(false);
+            summary.setReason("INSUFFICIENT_ENERGY_READINGS");
+        }
+        else if (end.compareTo(start) < 0)
+        {
+            summary.setValid(false);
+            summary.setReason("COUNTER_REGRESSION");
+        }
+        else
+        {
+            summary.setValid(true);
+            summary.setIntervalEnergy(end.subtract(start));
+        }
+        MeterEnergyAnalysis analysis = new MeterEnergyAnalysis();
+        analysis.setSummary(summary);
+        analysis.setEnergyPoints(meterCardMapper.selectEnergyHistoryTrend(query));
+        analysis.setPowerPoints(meterCardMapper.selectRealtimeHistoryTrend(query));
+        return analysis;
     }
 
     @Override

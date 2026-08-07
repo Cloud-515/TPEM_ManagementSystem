@@ -5,6 +5,7 @@ import {
   simulatedEnergyTrend,
   simulatedHistoryList,
   simulatedHistoryTrend,
+  simulatedEnergyAnalysis,
   simulatedMeterCardsResponse,
   simulatedMeterListResponse,
   simulatedQualityMeterListResponse,
@@ -58,6 +59,11 @@ export function getQualityMeterStats(query) {
 export function getHistoryTrend(category, query) {
   const mock = simulated(() => simulatedHistoryTrend(category, query))
   return mock || request({ url: `/system/meter/history/${category}/trend`, method: 'get', params: query })
+}
+
+export function getEnergyAnalysis(query) {
+  const mock = simulated(() => simulatedEnergyAnalysis(query))
+  return mock || request({ url: '/system/meter/energy/analysis', method: 'get', params: query })
 }
 
 export function listRealtimeHistory(query) {

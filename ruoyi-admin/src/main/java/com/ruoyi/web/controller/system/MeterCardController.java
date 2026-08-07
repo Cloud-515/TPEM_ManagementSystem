@@ -16,8 +16,8 @@ import com.ruoyi.common.core.page.TableDataInfo;
 import com.ruoyi.common.enums.BusinessType;
 import com.ruoyi.common.utils.poi.ExcelUtil;
 import com.ruoyi.system.domain.MeterCard;
+import com.ruoyi.system.domain.MeterEnergyAnalysis;
 import com.ruoyi.system.domain.MeterTopologyLayout;
-import com.ruoyi.system.domain.MeterQualityRiskStats;
 import com.ruoyi.system.domain.MeterQualityRiskStats;
 import com.ruoyi.system.service.IMeterCardService;
 import com.ruoyi.system.service.IMeterTopologyService;
@@ -103,6 +103,13 @@ public class MeterCardController extends BaseController
     public AjaxResult historyTrend(@PathVariable String category, MeterCard query)
     {
         return success(meterCardService.getHistoryTrend(category, query));
+    }
+
+    @GetMapping("/energy/analysis")
+    public AjaxResult energyAnalysis(MeterCard query)
+    {
+        MeterEnergyAnalysis analysis = meterCardService.getEnergyAnalysis(query);
+        return success(analysis);
     }
 
     @GetMapping("/history/realtime/page")

@@ -44,7 +44,7 @@
 <script>
 import * as echarts from 'echarts'
 import resize from '@/views/dashboard/mixins/resize'
-import { getHistoryTrend, listMeterCards } from '@/api/system/meter'
+import { getEnergyAnalysis, listMeterCards } from '@/api/system/meter'
 import RealtimeDetail from '../components/realtime-detail'
 import { formatMeterNumber } from '../components/meter-utils'
 
@@ -58,14 +58,15 @@ export default {
   components: { RealtimeDetail },
   mixins: [resize],
   data() {
-    return { analysisLoading: false, meterOptions: [], meterId: undefined, dateRange: [], rangePreset: '24h', selectedMeter: null, energyPoints: [], powerPoints: [], powerChart: null, analysisError: '' }
+    return { analysisLoading: false, meterOptions: [], meterId: undefined, dateRange: [], rangePreset: '24h', selectedMeter: null, energyPoints: [], powerPoints: [], energySummary: null, powerChart: null, analysisError: '', analysisRequestId: 0 }
   },
   computed: {
     energyKpis() {
-      const values = this.energyPoints.map(item => Number(item.forwardActiveEnergy)).filter(Number.isFinite)
       const powers = this.powerPoints.map(item => Number(item.activePowerTotal) / 1000).filter(Number.isFinite)
-      const start = values.length ? values[0] : null
-      const end = values.length ? values[values.length - 1] : null
+      const summary = this.energySummary || {}
+      const start = Number(summary.startForwardActiveEnergy)
+      const end = Number(summary.endForwardActiveEnergy)
+      const interval = summary.valid ? Number(summary.intervalEnergy) : null
       const peak = powers.length ? Math.max(...powers) : null
       const average = powers.length ? powers.reduce((sum, value) => sum + value, 0) / powers.length : null
       const compactEnergy = value => {
@@ -76,7 +77,7 @@ export default {
       }
       const startEnergy = compactEnergy(start)
       const endEnergy = compactEnergy(end)
-      const intervalEnergy = compactEnergy(start === null || end === null ? null : Math.max(0, end - start))
+      const intervalEnergy = compactEnergy(interval)
       return [
         { label: '起始累计电能', ...startEnergy },
         { label: '结束累计电能', ...endEnergy },
@@ -116,14 +117,37 @@ export default {
     },
     loadAnalysis() {
       if (!this.meterId || !this.dateRange || this.dateRange.length !== 2) return
-      this.analysisLoading = true; this.analysisError = ''
+      const requestId = ++this.analysisRequestId
+      this.analysisLoading = true
+      this.analysisError = ''
       const params = { meterId: this.meterId, beginTime: this.dateRange[0], endTime: this.dateRange[1] }
-      Promise.all([getHistoryTrend('energy', params), getHistoryTrend('realtime', params)]).then(([energyResponse, realtimeResponse]) => {
-        this.energyPoints = ((energyResponse.data && energyResponse.data.points) || []).slice().sort((a, b) => String(a.dataCollectTime).localeCompare(String(b.dataCollectTime)))
-        this.powerPoints = ((realtimeResponse.data && realtimeResponse.data.points) || []).slice().sort((a, b) => String(a.dataCollectTime).localeCompare(String(b.dataCollectTime)))
+      this.energySummary = null
+      this.energySummary = null
+      getEnergyAnalysis(params).then(response => {
+        if (requestId !== this.analysisRequestId) return
+        const analysis = response.data || response || {}
+        this.energySummary = analysis.summary || null
+        this.energyPoints = (analysis.energyPoints || []).slice().sort((a, b) => String(a.dataCollectTime).localeCompare(String(b.dataCollectTime)))
+        this.powerPoints = (analysis.powerPoints || []).slice().sort((a, b) => String(a.dataCollectTime).localeCompare(String(b.dataCollectTime)))
         this.selectedMeter = this.meterOptions.find(item => item.meterId === this.meterId) || this.energyPoints[0] || this.powerPoints[0] || null
+        const reasonMessages = {
+          NO_ENERGY_READINGS: '所选时间范围没有有效累计电能读数。',
+          INSUFFICIENT_ENERGY_READINGS: '所选时间范围只有一条有效累计电能读数，无法计算区间用电量。',
+          COUNTER_REGRESSION: '累计电能读数回退或设备复位，无法计算区间用电量。'
+        }
+        this.analysisError = reasonMessages[(this.energySummary || {}).reason] || ''
         this.renderPowerChart()
-      }).catch(() => { this.energyPoints = []; this.powerPoints = []; this.selectedMeter = null; this.analysisError = '无法读取该设备在当前范围内的历史遥测数据'; this.renderPowerChart() }).finally(() => { this.analysisLoading = false })
+      }).catch(() => {
+        if (requestId !== this.analysisRequestId) return
+        this.energySummary = null
+        this.energyPoints = []
+        this.powerPoints = []
+        this.selectedMeter = null
+        this.analysisError = '无法读取该设备在当前范围内的历史遥测数据'
+        this.renderPowerChart()
+      }).finally(() => {
+        if (requestId === this.analysisRequestId) this.analysisLoading = false
+      })
     },
     renderPowerChart() {
       if (!this.powerChart) return

@@ -215,6 +215,37 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         ORDER BY data_collect_time
     </select>
 
+    <select id="selectFirstForwardActiveEnergy" parameterType="MeterCard" resultType="java.math.BigDecimal">
+        SELECT forward_active_energy
+        FROM meter_energy_history
+        WHERE meter_id = #{meterId}
+          AND collect_time <![CDATA[>=]]> #{beginTime}
+          AND collect_time <![CDATA[<=]]> #{endTime}
+          AND forward_active_energy IS NOT NULL
+        ORDER BY collect_time ASC
+        LIMIT 1
+    </select>
+
+    <select id="selectLastForwardActiveEnergy" parameterType="MeterCard" resultType="java.math.BigDecimal">
+        SELECT forward_active_energy
+        FROM meter_energy_history
+        WHERE meter_id = #{meterId}
+          AND collect_time <![CDATA[>=]]> #{beginTime}
+          AND collect_time <![CDATA[<=]]> #{endTime}
+          AND forward_active_energy IS NOT NULL
+        ORDER BY collect_time DESC
+        LIMIT 1
+    </select>
+
+    <select id="countForwardActiveEnergyReadings" parameterType="MeterCard" resultType="long">
+        SELECT COUNT(1)
+        FROM meter_energy_history
+        WHERE meter_id = #{meterId}
+          AND collect_time <![CDATA[>=]]> #{beginTime}
+          AND collect_time <![CDATA[<=]]> #{endTime}
+          AND forward_active_energy IS NOT NULL
+    </select>
+
     <select id="selectQualityHistoryTrend" parameterType="MeterCard" resultMap="MeterCardResult">
         SELECT * FROM (
             SELECT

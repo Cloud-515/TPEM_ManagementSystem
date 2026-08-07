@@ -1,5 +1,7 @@
 package com.ruoyi.system.mapper;
 
+import java.math.BigDecimal;
+import java.math.BigDecimal;
 import java.util.Date;
 import java.util.List;
 import org.apache.ibatis.annotations.Param;
@@ -13,6 +15,12 @@ public interface MeterCardMapper
     public List<MeterCard> selectRealtimeHistoryTrend(MeterCard query);
 
     public List<MeterCard> selectEnergyHistoryTrend(MeterCard query);
+
+    public BigDecimal selectFirstForwardActiveEnergy(MeterCard query);
+
+    public BigDecimal selectLastForwardActiveEnergy(MeterCard query);
+
+    public Long countForwardActiveEnergyReadings(MeterCard query);
 
     public List<MeterCard> selectQualityHistoryTrend(MeterCard query);
 
