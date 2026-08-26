@@ -143,6 +143,7 @@
     </Reference>
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="Common\AppLogger.cs" />
     <Compile Include="Common\Utils.cs" />
     <Compile Include="Domain\Models.cs" />
     <Compile Include="Domain\MqttContracts.cs" />

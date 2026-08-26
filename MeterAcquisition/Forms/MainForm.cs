@@ -14,6 +14,7 @@ using MeterAcquisition.HeatPump.Forms;
 using MeterAcquisition.Thermostat.Forms;
 using MeterAcquisition.HeatPump.Services;
 using MeterAcquisition.Properties;
+using Tpem.Diagnostics;
 using ThreadingCancellationToken = System.Threading.CancellationToken;
 
 namespace MeterAcquisition
@@ -37,6 +38,8 @@ namespace MeterAcquisition
         private TabPage _tabMeterOverview;
         private MeterOverviewControl _meterOverview;
         private bool _isRefreshing = false;
+        /// <summary>正在退出。P0-5：置位后采集周期不再触碰控件与串口。</summary>
+        private bool _isShuttingDown = false;
         private int _refreshTickCount;
         private readonly int _realTimeIntervalSeconds;
         private readonly int _energyIntervalSeconds;
@@ -168,8 +171,15 @@ namespace MeterAcquisition
 
         private async void MainForm_Shown(object sender, EventArgs e)
         {
-            ResizeDashboardPanels();
-            await EnsureQueryModuleLoadedAsync(false).ConfigureAwait(true);
+            try
+            {
+                ResizeDashboardPanels();
+                await EnsureQueryModuleLoadedAsync(false).ConfigureAwait(true);
+            }
+            catch (Exception ex)
+            {
+                HandleHandlerException("窗体初始化", ex);
+            }
         }
 
         private void InitializeMeterOverviewTab()
@@ -270,9 +280,10 @@ namespace MeterAcquisition
             RefreshHeatPumpPorts(false);
             LoadHeatPumpSettings();
             _cmbHeatPumpPort.DropDown += (sender, e) => RefreshHeatPumpPorts(true);
-            _btnHeatPumpConnect.Click += async (sender, e) => await ConnectHeatPumpAsync();
-            _btnHeatPumpDisconnect.Click += async (sender, e) => await DisconnectHeatPumpAsync();
-            _btnHeatPumpScan.Click += async (sender, e) => await ScanHeatPumpControllersAsync();
+            // P0-1: 原来是 `async (sender, e) => await XxxAsync()`，异常无人接管会冒泡成未处理异常。
+            _btnHeatPumpConnect.Click += async (sender, e) => await RunGuardedAsync("热泵连接", ConnectHeatPumpAsync);
+            _btnHeatPumpDisconnect.Click += async (sender, e) => await RunGuardedAsync("热泵断开", DisconnectHeatPumpAsync);
+            _btnHeatPumpScan.Click += async (sender, e) => await RunGuardedAsync("热泵扫描", ScanHeatPumpControllersAsync);
 
             AddHeatPumpField(bar, "端口", _cmbHeatPumpPort);
             AddHeatPumpField(bar, "波特率", _cmbHeatPumpBaud);
@@ -593,7 +604,14 @@ namespace MeterAcquisition
 
         private async void HeatPumpRefreshTimer_Tick(object sender, EventArgs e)
         {
-            await RefreshHeatPumpTelemetryAsync();
+            try
+            {
+                await RefreshHeatPumpTelemetryAsync();
+            }
+            catch (Exception ex)
+            {
+                HandleHandlerException("热泵定时刷新", ex);
+            }
         }
 
         private async Task RefreshHeatPumpTelemetryAsync()
@@ -1953,52 +1971,84 @@ namespace MeterAcquisition
             btnAutoScanDashboard.Enabled = false;
             lblSecondStatusDashboard.Text = "正在扫描 " + start + "~" + end + " ...";
             lblSecondStatusDashboard.ForeColor = Color.Blue;
+            AppLogger.Info("Scan", "开始扫描仪表盘串口地址 " + start + "~" + end + "。");
 
-            var discovered = new List<byte>();
-            await Task.Run(() =>
+            // P0-1: 原实现中 await PublishBoxRegistryAsync(...) 没有任何 try/catch，
+            // Broker 不可达时会在 async void 里抛出未处理异常；同时按钮的重新启用也在正常路径上，
+            // 一旦中途抛出，三个按钮会永久卡在禁用状态。现在整体 try/catch/finally。
+            try
             {
-                for (int addr = start; addr <= end; addr++)
+                var discovered = new List<byte>();
+                await Task.Run(() =>
                 {
-                    try
+                    for (int addr = start; addr <= end; addr++)
                     {
-                        if (_meterDataService2.Probe((byte)addr))
-                            lock (discovered) discovered.Add((byte)addr);
+                        try
+                        {
+                            if (_meterDataService2.Probe((byte)addr))
+                                lock (discovered) discovered.Add((byte)addr);
+                        }
+                        catch (Exception probeEx)
+                        {
+                            AppLogger.Debug("Scan", "探测从站 " + addr + " 异常: " + probeEx.Message);
+                        }
                     }
-                    catch
-                    {
-                    }
+                });
+
+                lblSecondStatusDashboard.Text = "● 已连接 (发现 " + discovered.Count + " 台)";
+                lblSecondStatusDashboard.ForeColor = Color.Green;
+                AppLogger.Info(
+                    "Scan",
+                    "扫描完成，发现 " + discovered.Count + " 台: " +
+                    (discovered.Count == 0 ? "(无)" : string.Join(",", discovered.OrderBy(a => a))));
+
+                if (discovered.Count == 0)
+                {
+                    ClearDashboardMeters();
+                    RebuildDashboardPanels();
+                    ResizeDashboardPanels();
+                    await PublishBoxRegistryAsync(GetOrCreateDashboardBox(), "scan", ThreadingCancellationToken.None);
+                    MessageBox.Show("未在 " + start + "~" + end + " 范围内发现设备", "扫描完成", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    return;
                 }
-            });
 
-            btnAddMeter.Enabled = true;
-            btnSecondConnect.Enabled = true;
-            btnAutoScanDashboard.Enabled = true;
-            lblSecondStatusDashboard.Text = "● 已连接 (发现 " + discovered.Count + " 台)";
-            lblSecondStatusDashboard.ForeColor = Color.Green;
-
-            if (discovered.Count == 0)
-            {
-                ClearDashboardMeters();
+                ReplaceDashboardMeters(discovered.OrderBy(a => a).ToList());
                 RebuildDashboardPanels();
                 ResizeDashboardPanels();
+                UpdateAllCardLabels();
                 await PublishBoxRegistryAsync(GetOrCreateDashboardBox(), "scan", ThreadingCancellationToken.None);
-                MessageBox.Show("未在 " + start + "~" + end + " 范围内发现设备", "扫描完成", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                return;
             }
-
-            ReplaceDashboardMeters(discovered.OrderBy(a => a).ToList());
-            RebuildDashboardPanels();
-            ResizeDashboardPanels();
-            UpdateAllCardLabels();
-            await PublishBoxRegistryAsync(GetOrCreateDashboardBox(), "scan", ThreadingCancellationToken.None);
+            catch (Exception ex)
+            {
+                AppLogger.Error("Scan", "自动扫描过程中发生异常。", ex);
+                lblSecondStatusDashboard.Text = "扫描/档案同步失败: " + ex.Message;
+                lblSecondStatusDashboard.ForeColor = Color.OrangeRed;
+                MessageBox.Show(
+                    "扫描已中断：" + ex.Message + "\n\n设备列表可能未同步到平台，请检查 MQTT 连接后重试。",
+                    "扫描失败",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Warning);
+            }
+            finally
+            {
+                btnAddMeter.Enabled = true;
+                btnSecondConnect.Enabled = true;
+                btnAutoScanDashboard.Enabled = true;
+            }
         }
 
         private async void DeleteMeterCard_Click(object sender, EventArgs e)
         {
-            var btn = (Button)sender;
-            var meter = (MeterInfo)btn.Tag;
-            if (MessageBox.Show("确定删除电表 " + meter.Name + "？", "确认", MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes)
+            try
             {
+                var btn = (Button)sender;
+                var meter = (MeterInfo)btn.Tag;
+                if (MessageBox.Show("确定删除电表 " + meter.Name + "？", "确认", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
+                {
+                    return;
+                }
+
+                AppLogger.Info("Dashboard", "删除电表卡片: " + meter.Id + " (" + meter.Name + ", 从站 " + meter.SlaveAddress + ")。");
                 _meterManager.RemoveMeter(meter.Id);
                 RebuildDashboardPanels();
                 ResizeDashboardPanels();
@@ -2009,9 +2059,14 @@ namespace MeterAcquisition
                 }
                 catch (Exception ex)
                 {
+                    AppLogger.Warn("Dashboard", "删除后档案同步失败: " + meter.Id, ex);
                     lblSecondStatusDashboard.Text = "档案同步失败: " + ex.Message;
                     lblSecondStatusDashboard.ForeColor = Color.OrangeRed;
                 }
+            }
+            catch (Exception ex)
+            {
+                HandleHandlerException("删除电表卡片", ex);
             }
         }
 
@@ -2507,6 +2562,7 @@ namespace MeterAcquisition
         private async void RefreshTimer_Tick(object sender, EventArgs e)
         {
             if (_isRefreshing) return;
+            if (_isShuttingDown) return;
             if (!_modbusService.IsConnected && !_modbusService2.IsConnected) return;
 
             _isRefreshing = true;
@@ -2544,6 +2600,8 @@ namespace MeterAcquisition
                     pollResults = _meterManager.PollAll(readRealTime, readEnergy, readQuality);
                 });
 
+                if (_isShuttingDown) return;
+
                 if (readRealTime)
                 {
                     MeterGridRenderer.UpdateRealTimeGrid(dgvRealTime, rtData);
@@ -2561,6 +2619,17 @@ namespace MeterAcquisition
 
                 await PublishAllMetersAsync(pollResults, rtData, enData, qlData, readRealTime, readEnergy, readQuality);
                 UpdateAllCardLabels();
+            }
+            catch (ObjectDisposedException ex)
+            {
+                // 退出过程中串口/客户端已释放，属于预期竞态，不打扰用户（P0-5 已尽量避免）。
+                AppLogger.Debug("Poll", "采集周期在资源释放后被打断: " + ex.Message);
+            }
+            catch (Exception ex)
+            {
+                // P0-1: 这里原来没有 catch —— 报文解析越界、界面渲染、MQTT 发布的任何异常
+                // 都会从 async void 冒泡成未处理异常。采集主循环绝不允许因单次失败而终止。
+                HandleHandlerException("定时采集", ex);
             }
             finally
             {
@@ -2729,6 +2798,43 @@ namespace MeterAcquisition
         {
             var value = ConfigurationManager.AppSettings[key];
             return int.TryParse(value, out var parsed) && parsed > 0 ? parsed : defaultValue;
+        }
+
+        /// <summary>
+        /// `async void` 事件处理器的统一兜底（P0-1）。
+        ///
+        /// WinForms 里 async void 处理器抛出的异常会被抛回同步上下文，
+        /// 在没有全局兜底时表现为一个没有任何上下文的"未处理异常"对话框，用户点错就退出、且不留痕迹。
+        /// 这里保证：一定落日志、状态栏有提示、程序继续运行。
+        /// </summary>
+        private void HandleHandlerException(string context, Exception ex)
+        {
+            AppLogger.Error("UI", "事件处理器 " + context + " 发生异常。", ex);
+
+            try
+            {
+                lblStatus.Text = context + " 失败: " + ex.Message;
+                lblStatus.ForeColor = Color.OrangeRed;
+            }
+            catch
+            {
+                // 控件已释放（例如窗体正在关闭）时忽略。
+            }
+        }
+
+        /// <summary>
+        /// 供 `async` lambda 事件处理器使用的兜底包装（P0-1）。
+        /// </summary>
+        private async Task RunGuardedAsync(string context, Func<Task> body)
+        {
+            try
+            {
+                await body().ConfigureAwait(true);
+            }
+            catch (Exception ex)
+            {
+                HandleHandlerException(context, ex);
+            }
         }
 
         private static string GetMeterProtocol()
@@ -3262,6 +3368,10 @@ namespace MeterAcquisition
             MessageBox.Show("参数读取成功", "成功", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
 
+        /// <summary>
+        /// P0-3：写通讯参数是唯一会造成"设备从总线上消失、必须到现场恢复"的操作。
+        /// 因此这里补齐了输入校验、二次确认、写后回读比对，并全程留审计。
+        /// </summary>
         private void BtnWriteParams_Click(object sender, EventArgs e)
         {
             if (!_modbusService.IsConnected)
@@ -3269,16 +3379,107 @@ namespace MeterAcquisition
                 MessageBox.Show("请先连接设备", "提示", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
-            CommunicationConfig config = new CommunicationConfig
+
+            byte newAddress;
+            if (!byte.TryParse(txtParamAddr.Text, out newAddress) || newAddress < 1 || newAddress > 247)
             {
-                SlaveAddress = byte.Parse(txtParamAddr.Text),
-                BaudRate = int.Parse(cmbParamBaud.SelectedItem.ToString()),
-                Parity = ParseParityFromString(cmbParamParity.SelectedItem.ToString())
+                MessageBox.Show("从站地址必须是 1~247 之间的整数", "提示", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            int newBaudRate;
+            if (cmbParamBaud.SelectedItem == null || !int.TryParse(cmbParamBaud.SelectedItem.ToString(), out newBaudRate))
+            {
+                MessageBox.Show("请选择有效的波特率", "提示", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            if (cmbParamParity.SelectedItem == null)
+            {
+                MessageBox.Show("请选择校验位", "提示", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            var config = new CommunicationConfig
+            {
+                SlaveAddress = newAddress,
+                BaudRate = newBaudRate,
+                Parity = ParseParityFromString(cmbParamParity.SelectedItem.ToString()),
+                StopBits = _meterCommunicationConfig.StopBits,
+                DataBits = _meterCommunicationConfig.DataBits
             };
-            if (_legacyMeterDataService.WriteCommunicationConfig(config))
-                MessageBox.Show("参数写入成功", "成功", MessageBoxButtons.OK, MessageBoxIcon.Information);
-            else
-                MessageBox.Show("参数写入失败", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
+
+            var target = "从站 " + _legacyMeterDataService.SlaveAddress;
+            var summary = string.Format(
+                CultureInfo.InvariantCulture,
+                "即将修改电表的通讯参数：\n\n" +
+                "  目标设备：{0}\n" +
+                "  从站地址：{1}  →  {2}\n" +
+                "  波特率：  {3}  →  {4}\n" +
+                "  校验位：  {5}  →  {6}（停止位 {7}）\n\n" +
+                "写入后电表会按新参数通讯，上位机需要用相同参数重新连接。\n" +
+                "如果参数填错，电表将无法再被访问，只能到现场恢复。\n\n" +
+                "确认写入吗？",
+                target,
+                _legacyMeterDataService.SlaveAddress, config.SlaveAddress,
+                _meterCommunicationConfig.BaudRate, config.BaudRate,
+                _meterCommunicationConfig.Parity, config.Parity, config.StopBits);
+
+            if (MessageBox.Show(summary, "确认写入通讯参数", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes)
+            {
+                AppLogger.Info("MeterConfig", "用户取消写入通讯参数。");
+                return;
+            }
+
+            string error;
+            var ok = _legacyMeterDataService.WriteCommunicationConfig(config, out error);
+            var detail = string.Format(
+                CultureInfo.InvariantCulture,
+                "addr={0} baud={1} parity={2} stopBits={3}{4}",
+                config.SlaveAddress, config.BaudRate, config.Parity, config.StopBits,
+                ok ? string.Empty : " error=" + error);
+            AppLogger.Audit("写通讯参数", target, ok, detail);
+
+            if (!ok)
+            {
+                MessageBox.Show("参数写入失败：\n\n" + (error ?? "未知原因"), "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return;
+            }
+
+            // 写后回读比对：设备通常在应答后才切换参数，回读失败并不代表写失败，
+            // 因此这里只做提示，不当作错误。
+            var verify = _legacyMeterDataService.ReadCommunicationConfig();
+            if (verify == null)
+            {
+                MessageBox.Show(
+                    "参数已下发，但用原参数回读已无响应。\n\n" +
+                    "这通常说明设备已切换到新参数。请断开后用新的波特率/校验位重新连接并点击\"读取参数\"确认。",
+                    "写入完成（需重新连接确认）",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Information);
+                return;
+            }
+
+            var matched = verify.SlaveAddress == config.SlaveAddress
+                && verify.BaudRate == config.BaudRate
+                && verify.Parity == config.Parity;
+            AppLogger.Info(
+                "MeterConfig",
+                string.Format(
+                    CultureInfo.InvariantCulture,
+                    "写后回读: addr={0} baud={1} parity={2}，与目标{3}。",
+                    verify.SlaveAddress, verify.BaudRate, verify.Parity, matched ? "一致" : "不一致"));
+
+            MessageBox.Show(
+                matched
+                    ? "参数写入成功，回读校验一致。"
+                    : string.Format(
+                        CultureInfo.InvariantCulture,
+                        "参数已写入，但回读结果与目标不一致：\n\n回读值：地址 {0}，波特率 {1}，校验 {2}\n\n请断开后按新参数重连确认。",
+                        verify.SlaveAddress, verify.BaudRate, verify.Parity),
+                matched ? "成功" : "写入完成（回读不一致）",
+                MessageBoxButtons.OK,
+                matched ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
         }
 
         private void BtnReadDeviceInfo_Click(object sender, EventArgs e)
@@ -3305,44 +3506,91 @@ namespace MeterAcquisition
         }
 
         private void BtnDO1On_Click(object sender, EventArgs e)
-        { ExecuteControlAction("DO1合闸", () => _legacyMeterDataService.DO1_On()); }
+        { ExecuteControlAction("DO1 合闸", "该动作会闭合 DO1 输出回路。", () => _legacyMeterDataService.DO1_On()); }
 
         private void BtnDO1Off_Click(object sender, EventArgs e)
-        { ExecuteControlAction("DO1分闸", () => _legacyMeterDataService.DO1_Off()); }
+        { ExecuteControlAction("DO1 分闸", "该动作会断开 DO1 输出回路，可能切断下游设备供电。", () => _legacyMeterDataService.DO1_Off()); }
 
         private void BtnDO2On_Click(object sender, EventArgs e)
-        { ExecuteControlAction("DO2合闸", () => _legacyMeterDataService.DO2_On()); }
+        { ExecuteControlAction("DO2 合闸", "该动作会闭合 DO2 输出回路。", () => _legacyMeterDataService.DO2_On()); }
 
         private void BtnDO2Off_Click(object sender, EventArgs e)
-        { ExecuteControlAction("DO2分闸", () => _legacyMeterDataService.DO2_Off()); }
+        { ExecuteControlAction("DO2 分闸", "该动作会断开 DO2 输出回路，可能切断下游设备供电。", () => _legacyMeterDataService.DO2_Off()); }
 
         private void BtnClearEnergy_Click(object sender, EventArgs e)
         {
-            if (!_modbusService.IsConnected)
-            {
-                MessageBox.Show("请先连接设备", "提示", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                return;
-            }
-            if (MessageBox.Show("确定要清除总电能记录吗？", "确认", MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes)
-            {
-                if (_legacyMeterDataService.ClearEnergy())
-                    MessageBox.Show("清除成功", "成功", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                else
-                    MessageBox.Show("清除失败", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
-            }
+            ExecuteControlAction(
+                "清除总电能",
+                "电能累计值将被清零，该操作不可撤销，历史累计读数会永久丢失。",
+                () => _legacyMeterDataService.ClearEnergy());
         }
 
-        private void ExecuteControlAction(string actionName, Func<bool> action)
+        /// <summary>
+        /// P0-4：遥控动作统一入口。原实现点一下就直接下发分/合闸，而"清除电能"反而有确认框。
+        /// 现在所有会改变现场设备状态的动作都必须二次确认，并写入审计（审计是同步落盘的）。
+        /// </summary>
+        private void ExecuteControlAction(string actionName, string riskNote, Func<bool> action)
         {
             if (!_modbusService.IsConnected)
             {
                 MessageBox.Show("请先连接设备", "提示", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
-            if (action())
-                MessageBox.Show(actionName + "命令已发送", "成功", MessageBoxButtons.OK, MessageBoxIcon.Information);
+
+            var target = "从站 " + _legacyMeterDataService.SlaveAddress + " @ " + GetCurrentPortName();
+            var confirm = string.Format(
+                CultureInfo.InvariantCulture,
+                "确认执行遥控操作？\n\n  操作：{0}\n  目标：{1}\n\n{2}",
+                actionName,
+                target,
+                riskNote);
+
+            if (MessageBox.Show(confirm, "确认遥控操作", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes)
+            {
+                AppLogger.Info("Control", "用户取消遥控操作: " + actionName + " → " + target);
+                return;
+            }
+
+            bool ok;
+            try
+            {
+                ok = action();
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Audit(actionName, target, false, "exception=" + ex.Message);
+                AppLogger.Error("Control", "执行遥控操作 " + actionName + " 异常。", ex);
+                MessageBox.Show(actionName + " 执行异常：\n\n" + ex.Message, "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return;
+            }
+
+            AppLogger.Audit(actionName, target, ok, ok ? "device acknowledged" : "no/invalid response");
+
+            if (ok)
+            {
+                MessageBox.Show(actionName + " 命令已发送并被设备确认", "成功", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
             else
-                MessageBox.Show(actionName + "失败", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            {
+                MessageBox.Show(
+                    actionName + " 失败：设备未确认。\n\n请注意：命令可能已到达设备但应答丢失，" +
+                    "请通过实时数据核对实际状态后再重试。",
+                    "错误",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Error);
+            }
+        }
+
+        private string GetCurrentPortName()
+        {
+            try
+            {
+                return cmbPort.SelectedItem?.ToString() ?? cmbPort.Text ?? "-";
+            }
+            catch
+            {
+                return "-";
+            }
         }
 
         private int GetBaudRateComboIndex(int baudRate)
@@ -3378,25 +3626,103 @@ namespace MeterAcquisition
 
         #endregion
 
+        /// <summary>
+        /// P0-5：只负责"停止产生新工作"并让关闭流程有机会被取消。
+        /// 资源释放全部搬到 OnFormClosed —— 原实现在 base.OnFormClosing(e) 之前就 Dispose 了串口和
+        /// MQTT 客户端，一旦关闭被取消，程序会带着已释放的资源继续运行。
+        /// </summary>
         protected override void OnFormClosing(FormClosingEventArgs e)
         {
             _refreshTimer?.Stop();
             _heatPumpRefreshTimer?.Stop();
+
+            base.OnFormClosing(e);
+
+            if (e.Cancel)
+            {
+                // 关闭被取消：恢复采集，不能留下"定时器停了但界面还在"的半死状态。
+                AppLogger.Info("Shutdown", "关闭被取消，恢复定时采集。");
+                if (_modbusService.IsConnected || _modbusService2.IsConnected)
+                {
+                    _refreshTimer?.Start();
+                }
+
+                if (_heatPumpWorkspaceService != null && _heatPumpWorkspaceService.IsConnected)
+                {
+                    _heatPumpRefreshTimer?.Start();
+                }
+
+                return;
+            }
+
+            _isShuttingDown = true;
+        }
+
+        /// <summary>
+        /// P0-5：等在途采集落地后再释放资源，避免线程池里正在读串口的 Task
+        /// 撞上已 Dispose 的 SerialPort。
+        /// </summary>
+        protected override void OnFormClosed(FormClosedEventArgs e)
+        {
+            AppLogger.Info("Shutdown", "开始释放资源。");
+            WaitForRefreshToSettle(TimeSpan.FromSeconds(3));
+
             try
             {
                 SaveHeatPumpWorkspaceConfiguration();
             }
-            catch
+            catch (Exception ex)
             {
+                AppLogger.Warn("Shutdown", "保存热泵工作区配置失败。", ex);
             }
 
-            _heatPumpWorkspaceService.Dispose();
-            _modbusService?.Disconnect();
-            _modbusService?.Dispose();
-            _modbusService2?.Disconnect();
-            _modbusService2?.Dispose();
-            _mqttPublisherService?.Dispose();
-            base.OnFormClosing(e);
+            SafeDispose("热泵工作区", () => _heatPumpWorkspaceService?.Dispose());
+            SafeDispose("主串口", () =>
+            {
+                _modbusService?.Disconnect();
+                _modbusService?.Dispose();
+            });
+            SafeDispose("仪表盘串口", () =>
+            {
+                _modbusService2?.Disconnect();
+                _modbusService2?.Dispose();
+            });
+            SafeDispose("MQTT 发布器", () => _mqttPublisherService?.Dispose());
+
+            AppLogger.Info("Shutdown", "资源释放完成。");
+            base.OnFormClosed(e);
+        }
+
+        /// <summary>
+        /// 等待当前采集周期结束。定时器已停，所以最多等一轮。
+        /// 超时也不阻断退出 —— 卡住不能关窗比竞态更糟。
+        /// </summary>
+        private void WaitForRefreshToSettle(TimeSpan timeout)
+        {
+            var deadline = DateTime.UtcNow + timeout;
+            while (_isRefreshing && DateTime.UtcNow < deadline)
+            {
+                // 采集完成后要回到 UI 线程收尾，因此这里必须继续抽消息泵，否则会死锁。
+                Application.DoEvents();
+                System.Threading.Thread.Sleep(20);
+            }
+
+            if (_isRefreshing)
+            {
+                AppLogger.Warn("Shutdown", "等待采集周期结束超时，仍继续释放资源。");
+            }
+        }
+
+        private static void SafeDispose(string what, Action dispose)
+        {
+            try
+            {
+                dispose();
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Warn("Shutdown", "释放" + what + "时发生异常。", ex);
+            }
         }
     }
 }

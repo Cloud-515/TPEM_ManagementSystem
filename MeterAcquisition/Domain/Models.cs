@@ -78,6 +78,10 @@ namespace MeterAcquisition
         public bool IsToolbar { get; set; }
         public string DeviceModel { get; set; }
         public DateTime? LastSuccessfulReadTime { get; set; }
+
+        /// <summary>连续采集失败次数。P0-8：让"某台表一直读不到"从日志里可见。</summary>
+        public int ConsecutiveFailureCount { get; set; }
+
         public RealTimeData RealTime { get; set; }
         public EnergyData Energy { get; set; }
         public PowerQualityData Quality { get; set; }

@@ -1,6 +1,7 @@
 ﻿using System;
 using System.IO.Ports;
 using System.Threading;
+using Tpem.Diagnostics;
 
 
 namespace MeterAcquisition
@@ -62,11 +63,17 @@ namespace MeterAcquisition
                     _serialPort.PortName = portName;
                     _serialPort.Open();
 
+                    AppLogger.Info(
+                        "Serial",
+                        string.Format(
+                            "已打开 {0}: {1},{2},{3},{4}",
+                            portName, Config.BaudRate, Config.Parity, Config.DataBits, Config.StopBits));
                     OnConnectionStateChanged(true, portName, "连接成功");
                     return true;
                 }
                 catch (Exception ex)
                 {
+                    AppLogger.Error("Serial", "打开串口 " + portName + " 失败。", ex);
                     OnConnectionStateChanged(false, portName, $"连接失败: {ex.Message}");
                     OnCommunicationError(ex);
                     return false;
@@ -85,6 +92,7 @@ namespace MeterAcquisition
                 {
                     string portName = _serialPort.PortName;
                     _serialPort.Close();
+                    AppLogger.Info("Serial", "已关闭 " + portName + "。");
                     OnConnectionStateChanged(false, portName, "已断开");
                 }
             }
@@ -95,11 +103,19 @@ namespace MeterAcquisition
         /// </summary>
         public void UpdateConfig(CommunicationConfig config)
         {
-            Config = config;
-            _serialPort.BaudRate = config.BaudRate;
-            _serialPort.Parity = config.Parity;
-            _serialPort.DataBits = config.DataBits;
-            _serialPort.StopBits = config.StopBits;
+            lock (_lockObj)
+            {
+                Config = config;
+                if (_serialPort == null)
+                {
+                    return;
+                }
+
+                _serialPort.BaudRate = config.BaudRate;
+                _serialPort.Parity = config.Parity;
+                _serialPort.DataBits = config.DataBits;
+                _serialPort.StopBits = config.StopBits;
+            }
         }
 
         /// <summary>
@@ -374,11 +390,41 @@ namespace MeterAcquisition
 
         public void Dispose()
         {
-            if (!_disposed)
+            lock (_lockObj)
             {
-                _serialPort?.Dispose();
+                if (_disposed)
+                {
+                    return;
+                }
+
                 _disposed = true;
+
+                // 先关闭再释放：直接 Dispose 一个仍打开的 SerialPort 在部分 USB 转串口驱动上会抛异常。
+                try
+                {
+                    if (_serialPort != null && _serialPort.IsOpen)
+                    {
+                        _serialPort.Close();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    AppLogger.Warn("Serial", "关闭串口时发生异常。", ex);
+                }
+
+                try
+                {
+                    _serialPort?.Dispose();
+                }
+                catch (Exception ex)
+                {
+                    AppLogger.Warn("Serial", "释放串口时发生异常。", ex);
+                }
+
+                _serialPort = null;
             }
+
+            GC.SuppressFinalize(this);
         }
     }
 }

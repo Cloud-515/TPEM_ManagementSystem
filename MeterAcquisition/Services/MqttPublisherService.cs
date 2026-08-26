@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using MQTTnet;
 using MQTTnet.Client;
 using Newtonsoft.Json;
+using Tpem.Diagnostics;
 
 namespace MeterAcquisition
 {
@@ -32,7 +33,7 @@ namespace MeterAcquisition
         {
             _host = GetAppSetting("MqttHost", "127.0.0.1");
             _port = int.TryParse(GetAppSetting("MqttPort", "1883"), out var port) ? port : 1883;
-            _clientId = GetAppSetting("MqttClientId", "meter-acquisition-winform");
+            _clientId = BuildUniqueClientId(GetAppSetting("MqttClientId", "meter-acquisition-winform"));
             _topicTemplate = GetAppSetting("MqttTopicTemplate", "meter/{site}/{box}/{meter}");
             _legacyTopic = GetAppSetting("MqttLegacyTopic", "meter/data");
             _publishLegacyTopic = bool.TryParse(GetAppSetting("PublishLegacyTopic", "true"), out var publishLegacyTopic) && publishLegacyTopic;
@@ -49,7 +50,20 @@ namespace MeterAcquisition
 
             var factory = new MqttFactory();
             _client = factory.CreateMqttClient();
-            _client.DisconnectedAsync += args => Task.CompletedTask;
+            _client.ConnectedAsync += args =>
+            {
+                AppLogger.Info("Mqtt", "已连接 Broker " + _host + ":" + _port + "，ClientId=" + _clientId);
+                return Task.CompletedTask;
+            };
+            _client.DisconnectedAsync += args =>
+            {
+                // 发布路径是"用时才连"，这里只需留痕；重连由 EnsureConnectedAsync 在下次发布时完成。
+                AppLogger.Warn(
+                    "Mqtt",
+                    "与 Broker 断开，原因: " + args.Reason + "。下次发布时会自动重连。",
+                    args.Exception);
+                return Task.CompletedTask;
+            };
         }
 
         public async Task PublishAsync(MeterTelemetryMessage message, CancellationToken cancellationToken = default(CancellationToken))
@@ -211,6 +225,39 @@ namespace MeterAcquisition
         {
             var value = ConfigurationManager.AppSettings[key];
             return string.IsNullOrWhiteSpace(value) ? defaultValue : value;
+        }
+
+        /// <summary>
+        /// 给配置里的 ClientId 追加机器名后缀（P0-7）。
+        /// 配置项是写死的常量，多机部署或误开两个实例时会用同一个 ClientId 连接同一个 Broker，
+        /// 按 MQTT 规范后连的会把先连的顶下线，双方各自重连 → 无限重连风暴、数据双向丢失。
+        /// </summary>
+        private static string BuildUniqueClientId(string configured)
+        {
+            var baseId = string.IsNullOrWhiteSpace(configured) ? "meter-acquisition" : configured.Trim();
+            string machine;
+            try
+            {
+                machine = Environment.MachineName;
+            }
+            catch
+            {
+                machine = "host";
+            }
+
+            var suffix = SanitizeTopicSegment(machine);
+            var clientId = baseId + "-" + suffix;
+
+            // MQTT 3.1.1 服务端可只保证 23 字符，超长时退回哈希后缀以保持唯一且稳定。
+            if (clientId.Length > 23)
+            {
+                var hash = (uint)StringComparer.Ordinal.GetHashCode(suffix);
+                var shortSuffix = "-" + hash.ToString("x8", CultureInfo.InvariantCulture);
+                var keep = Math.Max(1, 23 - shortSuffix.Length);
+                clientId = baseId.Substring(0, Math.Min(baseId.Length, keep)) + shortSuffix;
+            }
+
+            return clientId;
         }
 
         public void Dispose()

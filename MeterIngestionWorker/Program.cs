@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Concurrent;
 using System.Configuration;
 using System.Globalization;
@@ -12,14 +12,24 @@ using MQTTnet.Client;
 using Npgsql;
 using NpgsqlTypes;
 using Newtonsoft.Json;
+using Tpem.Diagnostics;
 
 namespace MeterIngestionWorker
 {
     internal static class Program
     {
-        private static readonly BlockingCollection<MqttEnvelope> MessageQueue = new BlockingCollection<MqttEnvelope>(new ConcurrentQueue<MqttEnvelope>());
+        /// <summary>
+        /// P0-7: 队列必须有界。原来是无界 BlockingCollection —— PostgreSQL 一旦不可用，
+        /// 消息会一直堆积直到进程 OOM，而且此前没有任何迹象。
+        /// 队列满时丢弃**最旧**的消息：实时遥测的价值随时间衰减，保住最新数据更有意义。
+        /// </summary>
+        private static BlockingCollection<MqttEnvelope> MessageQueue;
+
         private static readonly ConcurrentDictionary<string, DateTime> RecentMessages = new ConcurrentDictionary<string, DateTime>(StringComparer.Ordinal);
         private static readonly TimeSpan DuplicateWindow = TimeSpan.FromSeconds(10);
+        private static long _droppedEnvelopes;
+        private static long _processedEnvelopes;
+        private static long _failedEnvelopes;
         private static readonly JsonSerializerSettings JsonSettings = new JsonSerializerSettings
         {
             DateFormatString = "o",
@@ -58,11 +68,31 @@ namespace MeterIngestionWorker
         private static string _siteCode;
         private static string _mysqlConnectionString;
         private static int _processWorkers;
+        private static int _maxQueueLength;
+        private static TimeSpan _mqttReconnectMaxDelay;
+        private static TimeSpan _heartbeatInterval;
 
         private static async Task<int> Main()
         {
             Console.OutputEncoding = Encoding.UTF8;
-            LoadConfiguration();
+
+            try
+            {
+                LoadConfiguration();
+            }
+            catch (Exception ex)
+            {
+                // 配置错误必须给出清楚的原因，而不是一个裸的未处理异常堆栈（P0-1）。
+                Console.WriteLine("配置加载失败，服务无法启动: " + ex.Message);
+                return 2;
+            }
+
+            AppLogger.Initialize(
+                "ingestion",
+                AppLogger.ParseLevel(ConfigurationManager.AppSettings["LogLevel"], Tpem.Diagnostics.LogLevel.Info),
+                true);
+            InstallGlobalExceptionHandlers();
+
             var exitCode = 0;
 
             using (var cts = new CancellationTokenSource())
@@ -71,22 +101,23 @@ namespace MeterIngestionWorker
                 {
                     e.Cancel = true;
                     cts.Cancel();
-                    Console.WriteLine("正在停止后台订阅服务...");
+                    AppLogger.Info("Lifecycle", "收到停止信号，正在停止后台订阅服务...");
                 };
 
                 var workers = StartWorkers();
                 var offlineMonitor = Task.Run(() => MonitorOfflineMetersAsync(cts.Token), cts.Token);
+                var heartbeat = Task.Run(() => ReportHeartbeatAsync(cts.Token), cts.Token);
                 try
                 {
                     await RunMqttSubscriberAsync(cts.Token).ConfigureAwait(false);
                 }
                 catch (OperationCanceledException)
                 {
-                    Console.WriteLine("服务已停止。");
+                    AppLogger.Info("Lifecycle", "服务已停止。");
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine("服务异常退出: " + ex);
+                    AppLogger.Error("Lifecycle", "服务异常退出。", ex);
                     exitCode = 1;
                 }
                 finally
@@ -94,14 +125,22 @@ namespace MeterIngestionWorker
                     MessageQueue.CompleteAdding();
                 }
 
-                await Task.WhenAll(workers.Concat(new[] { offlineMonitor })).ConfigureAwait(false);
+                await Task.WhenAll(workers.Concat(new[] { offlineMonitor, heartbeat })).ConfigureAwait(false);
+                AppLogger.Info(
+                    "Lifecycle",
+                    string.Format(
+                        CultureInfo.InvariantCulture,
+                        "累计处理 {0} 条，失败 {1} 条，因队列满丢弃 {2} 条。",
+                        Interlocked.Read(ref _processedEnvelopes),
+                        Interlocked.Read(ref _failedEnvelopes),
+                        Interlocked.Read(ref _droppedEnvelopes)));
+                AppLogger.Shutdown();
                 return exitCode;
             }
         }
 
         private static void LoadConfiguration()
-        {
-            _mqttHost = GetRequiredAppSetting("MqttHost");
+        {            _mqttHost = GetRequiredAppSetting("MqttHost");
             _mqttPort = int.Parse(GetAppSetting("MqttPort", "1883"), CultureInfo.InvariantCulture);
             _mqttClientId = GetAppSetting("MqttClientId", "meter-ingestion-worker");
             _mqttLegacyTopic = GetAppSetting("MqttLegacyTopic", "meter/data");
@@ -120,6 +159,11 @@ namespace MeterIngestionWorker
                 _processWorkers = 1;
             }
 
+            _maxQueueLength = GetPositiveIntAppSetting("MaxQueueLength", 50000);
+            MessageQueue = new BlockingCollection<MqttEnvelope>(new ConcurrentQueue<MqttEnvelope>(), _maxQueueLength);
+            _mqttReconnectMaxDelay = TimeSpan.FromSeconds(GetPositiveIntAppSetting("MqttReconnectMaxDelaySeconds", 60));
+            _heartbeatInterval = TimeSpan.FromSeconds(GetPositiveIntAppSetting("HeartbeatIntervalSeconds", 300));
+
             RealtimeHistoryInterval = TimeSpan.FromSeconds(GetPositiveIntAppSetting("RealtimeHistoryIntervalSeconds", 30));
             EnergyHistoryInterval = TimeSpan.FromMinutes(GetPositiveIntAppSetting("EnergyHistoryIntervalMinutes", 15));
             QualityHistoryInterval = TimeSpan.FromMinutes(GetPositiveIntAppSetting("QualityHistoryIntervalMinutes", 10));
@@ -137,6 +181,28 @@ namespace MeterIngestionWorker
             AlarmVoltageHighThreshold = GetPositiveFloatAppSetting("AlarmVoltageHighThreshold", 260f);
             AlarmCurrentHighThreshold = GetPositiveFloatAppSetting("AlarmCurrentHighThreshold", 400f);
             AlarmPowerFactorLowThreshold = GetPositiveFloatAppSetting("AlarmPowerFactorLowThreshold", 0.5f);
+        }
+
+        /// <summary>
+        /// P0-1：后台服务的兜底。没有这两道，一个后台线程异常会直接终止进程，
+        /// 而现场只会看到"服务窗口不见了"，没有任何原因记录。
+        /// </summary>
+        private static void InstallGlobalExceptionHandlers()
+        {
+            AppDomain.CurrentDomain.UnhandledException += (sender, e) =>
+            {
+                AppLogger.Error(
+                    "UnhandledDomain",
+                    "未处理异常，IsTerminating=" + e.IsTerminating + "。",
+                    e.ExceptionObject as Exception);
+                AppLogger.Shutdown();
+            };
+
+            TaskScheduler.UnobservedTaskException += (sender, e) =>
+            {
+                AppLogger.Error("UnobservedTask", "存在无人处理的 Task 异常。", e.Exception);
+                e.SetObserved();
+            };
         }
 
         private static Task[] StartWorkers()
@@ -171,38 +237,175 @@ namespace MeterIngestionWorker
                         ReceivedAt = GetBeijingNow().UtcDateTime
                     };
 
-                    if (!MessageQueue.IsAddingCompleted)
+                    EnqueueEnvelope(envelope);
+                    return Task.CompletedTask;
+                };
+
+                client.DisconnectedAsync += args =>
+                {
+                    // 这里只留痕，不做重连 —— 重连交给下面的主循环统一负责。
+                    // P0-6: 原实现在这个回调里"延时 5 秒后重连一次"，一旦那次连接失败，
+                    // 异常在事件回调里消失，就再也不会有第二次尝试，服务进程活着但永久掉线。
+                    //
+                    // 注意：MQTTnet 在 ConnectAsync 失败时也会触发本回调，此时 ClientWasConnected=false。
+                    // 那种情况由重连循环负责记录（带堆栈），这里不重复输出，否则一次失败会刷两份完整堆栈。
+                    if (args.ClientWasConnected && !cancellationToken.IsCancellationRequested)
                     {
-                        MessageQueue.Add(envelope, cancellationToken);
+                        AppLogger.Warn("Mqtt", "与 Broker 的连接已断开，原因: " + args.Reason + "。将由主循环退避重连。");
                     }
 
                     return Task.CompletedTask;
                 };
 
-                client.DisconnectedAsync += async args =>
-                {
-                    if (cancellationToken.IsCancellationRequested)
-                    {
-                        return;
-                    }
-
-                    Console.WriteLine("MQTT 已断开，5 秒后重连。");
-                    await Task.Delay(TimeSpan.FromSeconds(5), cancellationToken).ConfigureAwait(false);
-                    await ConnectAndSubscribeAsync(client, cancellationToken).ConfigureAwait(false);
-                };
-
-                await ConnectAndSubscribeAsync(client, cancellationToken).ConfigureAwait(false);
-                Console.WriteLine("订阅服务已启动，按 Ctrl+C 停止。");
-
-                while (!cancellationToken.IsCancellationRequested)
-                {
-                    await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken).ConfigureAwait(false);
-                }
+                await MaintainConnectionAsync(client, cancellationToken).ConfigureAwait(false);
 
                 if (client.IsConnected)
                 {
                     await client.DisconnectAsync().ConfigureAwait(false);
                 }
+            }
+        }
+
+        /// <summary>
+        /// P0-6：带指数退避的连接维持循环。只要服务在跑，就会一直尝试恢复连接，
+        /// 并且每次尝试都留日志，"活着但掉线"变成可观测状态。
+        /// </summary>
+        private static async Task MaintainConnectionAsync(IMqttClient client, CancellationToken cancellationToken)
+        {
+            var delay = TimeSpan.FromSeconds(5);
+            var announced = false;
+            var stackLogged = false;
+
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                if (client.IsConnected)
+                {
+                    if (!announced)
+                    {
+                        AppLogger.Info("Mqtt", "订阅服务已就绪，按 Ctrl+C 停止。");
+                        announced = true;
+                    }
+
+                    delay = TimeSpan.FromSeconds(5);
+                    stackLogged = false;
+                    await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken).ConfigureAwait(false);
+                    continue;
+                }
+
+                announced = false;
+                try
+                {
+                    await ConnectAndSubscribeAsync(client, cancellationToken).ConfigureAwait(false);
+                    continue;
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    var summary = string.Format(
+                        CultureInfo.InvariantCulture,
+                        "连接 Broker {0}:{1} 失败，{2} 秒后重试。",
+                        _mqttHost, _mqttPort, delay.TotalSeconds);
+
+                    // 只在本轮故障的第一次记录完整堆栈。Broker 长时间不可用时，
+                    // 后续重试只留一行摘要，避免几十行堆栈把日志刷爆导致真正的问题被淹没。
+                    if (!stackLogged)
+                    {
+                        AppLogger.Error("Mqtt", summary, ex);
+                        stackLogged = true;
+                    }
+                    else
+                    {
+                        AppLogger.Warn("Mqtt", summary + " 原因: " + RootCauseMessage(ex));
+                    }
+                }
+
+                await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
+                delay = TimeSpan.FromSeconds(Math.Min(delay.TotalSeconds * 2, _mqttReconnectMaxDelay.TotalSeconds));
+            }
+        }
+
+        private static string RootCauseMessage(Exception ex)
+        {
+            var current = ex;
+            while (current.InnerException != null)
+            {
+                current = current.InnerException;
+            }
+
+            return current.Message;
+        }
+
+        /// <summary>
+        /// 入队。队列满时丢弃最旧的一条再放入最新的（P0-7）。
+        /// </summary>
+        private static void EnqueueEnvelope(MqttEnvelope envelope)
+        {
+            if (MessageQueue.IsAddingCompleted)
+            {
+                return;
+            }
+
+            try
+            {
+                if (MessageQueue.TryAdd(envelope))
+                {
+                    return;
+                }
+
+                MqttEnvelope discarded;
+                if (MessageQueue.TryTake(out discarded))
+                {
+                    var dropped = Interlocked.Increment(ref _droppedEnvelopes);
+                    if (dropped == 1 || dropped % 1000 == 0)
+                    {
+                        AppLogger.Warn(
+                            "Queue",
+                            string.Format(
+                                CultureInfo.InvariantCulture,
+                                "待入库队列已满（上限 {0}），累计丢弃最旧消息 {1} 条。请检查 PostgreSQL 可用性与入库吞吐。",
+                                _maxQueueLength, dropped));
+                    }
+                }
+
+                if (!MessageQueue.TryAdd(envelope))
+                {
+                    Interlocked.Increment(ref _droppedEnvelopes);
+                }
+            }
+            catch (InvalidOperationException)
+            {
+                // 队列已关闭（服务正在停止），直接丢弃。
+            }
+        }
+
+        /// <summary>
+        /// 心跳日志（P0-6/P0-8）：定期输出队列深度与处理计数，
+        /// 让"进程还在但什么都没干"可以从日志里发现。
+        /// </summary>
+        private static async Task ReportHeartbeatAsync(CancellationToken cancellationToken)
+        {
+            try
+            {
+                while (!cancellationToken.IsCancellationRequested)
+                {
+                    await Task.Delay(_heartbeatInterval, cancellationToken).ConfigureAwait(false);
+                    AppLogger.Info(
+                        "Heartbeat",
+                        string.Format(
+                            CultureInfo.InvariantCulture,
+                            "队列深度 {0}/{1}，已处理 {2}，失败 {3}，丢弃 {4}。",
+                            MessageQueue.Count,
+                            _maxQueueLength,
+                            Interlocked.Read(ref _processedEnvelopes),
+                            Interlocked.Read(ref _failedEnvelopes),
+                            Interlocked.Read(ref _droppedEnvelopes)));
+                }
+            }
+            catch (OperationCanceledException)
+            {
             }
         }
 
@@ -224,7 +427,7 @@ namespace MeterIngestionWorker
             }
 
             await client.ConnectAsync(builder.Build(), cancellationToken).ConfigureAwait(false);
-            Console.WriteLine("MQTT 已连接: " + _mqttHost + ":" + _mqttPort);
+            AppLogger.Info("Mqtt", "已连接 Broker " + _mqttHost + ":" + _mqttPort + "，ClientId=" + _mqttClientId);
 
             var subscribeBuilder = new MqttClientSubscribeOptionsBuilder()
                 .WithTopicFilter(f => f.WithTopic(_mqttTopicPattern))
@@ -252,7 +455,7 @@ namespace MeterIngestionWorker
                 topics.Add(_mqttLegacyTopic);
             }
 
-            Console.WriteLine("已订阅主题: " + string.Join(" , ", topics));
+            AppLogger.Info("Mqtt", "已订阅主题: " + string.Join(" , ", topics));
         }
 
         private static void ProcessMessages()
@@ -262,10 +465,12 @@ namespace MeterIngestionWorker
                 try
                 {
                     HandleEnvelope(envelope);
+                    Interlocked.Increment(ref _processedEnvelopes);
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine("处理消息失败: " + ex);
+                    Interlocked.Increment(ref _failedEnvelopes);
+                    AppLogger.Error("Ingest", "处理消息失败，主题: " + (envelope?.Topic ?? "-"), ex);
                 }
             }
         }
@@ -274,7 +479,7 @@ namespace MeterIngestionWorker
         {
             if (IsDuplicateEnvelope(envelope))
             {
-                Console.WriteLine("检测到重复消息，已跳过: " + envelope.Topic);
+                AppLogger.Debug("Dedup", "检测到重复消息，已跳过: " + envelope.Topic);
                 return;
             }
 
@@ -396,7 +601,7 @@ namespace MeterIngestionWorker
                     if (!TryInsertHeatPumpMessageLog(connection, transaction, envelope.Topic, telemetry.MessageId))
                     {
                         transaction.Commit();
-                        Console.WriteLine("热泵消息已处理，跳过重复投递: " + envelope.Topic);
+                        AppLogger.Debug("Dedup", "热泵消息已处理，跳过重复投递: " + envelope.Topic);
                         return;
                     }
 
@@ -423,7 +628,7 @@ namespace MeterIngestionWorker
                     if (!TryInsertThermostatMessageLog(connection, transaction, telemetry.MessageId))
                     {
                         transaction.Commit();
-                        Console.WriteLine("温控器消息已处理，跳过重复投递: " + envelope.Topic);
+                        AppLogger.Debug("Dedup", "温控器消息已处理，跳过重复投递: " + envelope.Topic);
                         return;
                     }
 
@@ -1618,7 +1823,7 @@ updated_at = CURRENT_TIMESTAMP;";
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine("离线监控失败: " + ex.Message);
+                    AppLogger.Error("OfflineMonitor", "离线监控轮次失败。", ex);
                 }
 
                 await Task.Delay(TimeSpan.FromSeconds(5), cancellationToken).ConfigureAwait(false);
