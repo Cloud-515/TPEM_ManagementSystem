@@ -71,6 +71,8 @@ namespace MeterIngestionWorker
         private static string _mqttClientId;
         private static string _mqttLegacyTopic;
         private static bool _subscribeLegacyTopic;
+        /// <summary>X-5：温控器链路未接通，默认不订阅。见 ConnectAndSubscribeAsync 里的说明。</summary>
+        private static bool _subscribeThermostatTopic;
         private static string _mqttTopicPattern;
         private static string _mqttRegistryTopicPattern;
         private static string _mqttHeatPumpTopicPattern;
@@ -159,6 +161,7 @@ namespace MeterIngestionWorker
             _mqttClientId = GetAppSetting("MqttClientId", "meter-ingestion-worker");
             _mqttLegacyTopic = GetAppSetting("MqttLegacyTopic", "meter/data");
             _subscribeLegacyTopic = bool.TryParse(GetAppSetting("SubscribeLegacyTopic", "false"), out var subscribeLegacyTopic) && subscribeLegacyTopic;
+            _subscribeThermostatTopic = bool.TryParse(GetAppSetting("SubscribeThermostatTopic", "false"), out var subscribeThermostat) && subscribeThermostat;
             _mqttTopicPattern = GetAppSetting("MqttTopicPattern", "meter/+/+/+");
             _mqttRegistryTopicPattern = GetAppSetting("MqttRegistryTopicPattern", "meter/registry/+/+");
             _mqttHeatPumpTopicPattern = GetAppSetting("HeatPumpMqttTopicPattern", "tpem/+/heatpump/+/telemetry");
@@ -475,8 +478,16 @@ namespace MeterIngestionWorker
             var subscribeBuilder = new MqttClientSubscribeOptionsBuilder()
                 .WithTopicFilter(f => f.WithTopic(_mqttTopicPattern))
                 .WithTopicFilter(f => f.WithTopic(_mqttRegistryTopicPattern))
-                .WithTopicFilter(f => f.WithTopic(_mqttHeatPumpTopicPattern))
-                .WithTopicFilter(f => f.WithTopic(_mqttThermostatTopicPattern));
+                .WithTopicFilter(f => f.WithTopic(_mqttHeatPumpTopicPattern));
+
+            // X-5：温控器链路两端都没接通 —— 上位机的 PublishThermostatTelemetryAsync 从无调用点，
+            // 现网也没有 thermostat_* 四张表（迁移 002 未执行，且业务决定暂不上线）。
+            // 因此默认不订阅：订阅了也收不到消息，一旦收到反而会因表不存在而每条都失败。
+            // 温控器要上线时把 SubscribeThermostatTopic 改成 true，并同时执行迁移 002、补上发布端调用。
+            if (_subscribeThermostatTopic)
+            {
+                subscribeBuilder.WithTopicFilter(f => f.WithTopic(_mqttThermostatTopicPattern));
+            }
 
             if (_subscribeLegacyTopic && !string.IsNullOrWhiteSpace(_mqttLegacyTopic) && !string.Equals(_mqttLegacyTopic, _mqttTopicPattern, StringComparison.OrdinalIgnoreCase))
             {
@@ -486,19 +497,31 @@ namespace MeterIngestionWorker
             var subscribeOptions = subscribeBuilder.Build();
             await client.SubscribeAsync(subscribeOptions, cancellationToken).ConfigureAwait(false);
 
-            var topics = new System.Collections.Generic.List<string>
+            var topics = new List<string>
             {
                 _mqttTopicPattern,
                 _mqttRegistryTopicPattern,
-                _mqttHeatPumpTopicPattern,
-                _mqttThermostatTopicPattern
+                _mqttHeatPumpTopicPattern
             };
+            if (_subscribeThermostatTopic)
+            {
+                topics.Add(_mqttThermostatTopicPattern);
+            }
+
             if (_subscribeLegacyTopic && !string.IsNullOrWhiteSpace(_mqttLegacyTopic) && !string.Equals(_mqttLegacyTopic, _mqttTopicPattern, StringComparison.OrdinalIgnoreCase))
             {
                 topics.Add(_mqttLegacyTopic);
             }
 
             AppLogger.Info("Mqtt", "已订阅主题: " + string.Join(" , ", topics));
+            if (!_subscribeThermostatTopic)
+            {
+                AppLogger.Info(
+                    "Mqtt",
+                    "温控器主题未订阅（SubscribeThermostatTopic=false）。该链路尚未接通：" +
+                    "上位机未接入发布、迁移 002 未执行。要启用需三件事同时做到：执行迁移 002、" +
+                    "补上位机发布端调用、把本配置改为 true。");
+            }
         }
 
         private static void ProcessMessages()
@@ -540,6 +563,14 @@ namespace MeterIngestionWorker
 
             if (IsThermostatTopic(envelope.Topic))
             {
+                if (!_subscribeThermostatTopic)
+                {
+                    // X-5：链路未接通时不去写 thermostat_* 四张表（现网不存在），
+                    // 否则每条消息都会变成一条失败记录。
+                    AppLogger.Debug("Ingest", "温控器链路未启用，忽略消息: " + envelope.Topic);
+                    return;
+                }
+
                 HandleThermostatTelemetryEnvelope(envelope);
                 return;
             }
