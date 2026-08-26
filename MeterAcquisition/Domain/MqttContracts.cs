@@ -46,6 +46,12 @@ namespace MeterAcquisition
 
     public class MeterTelemetryMessage
     {
+        /// <summary>P1-4：消息类型与版本号。此前电表消息完全没有版本字段，改结构无兼容手段。</summary>
+        public string MessageType { get; set; } = "meter.telemetry.v1";
+
+        /// <summary>P1-4：消息唯一标识，供入库服务做库级幂等去重（与热泵/温控器链路一致）。</summary>
+        public Guid MessageId { get; set; }
+
         public string SiteCode { get; set; }
         public string BoxCode { get; set; }
         public string MeterCode { get; set; }
@@ -68,7 +74,9 @@ namespace MeterAcquisition
         public string BoxCode { get; set; }
         public string BoxName { get; set; }
         public string Action { get; set; }
-        public DateTime ScanTime { get; set; }
+        /// <summary>P1-8：改为 DateTimeOffset，与遥测的 CollectTime 统一时间基准。
+        /// 原为 DateTime（Kind=Local），机器时区一旦不是 +08:00 就与遥测时间错位。</summary>
+        public DateTimeOffset ScanTime { get; set; }
         public List<MeterRegistryItem> Meters { get; set; } = new List<MeterRegistryItem>();
     }
 

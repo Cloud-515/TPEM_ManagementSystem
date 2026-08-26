@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.IO.Ports;
 
@@ -33,40 +33,40 @@ namespace MeterAcquisition
 
     public class RealTimeData
     {
-        public float VoltageA { get; set; }
-        public float VoltageB { get; set; }
-        public float VoltageC { get; set; }
-        public float VoltageAB { get; set; }
-        public float VoltageBC { get; set; }
-        public float VoltageCA { get; set; }
-        public float CurrentA { get; set; }
-        public float CurrentB { get; set; }
-        public float CurrentC { get; set; }
-        public float ActivePowerTotal { get; set; }
-        public float ReactivePowerTotal { get; set; }
-        public float ApparentPowerTotal { get; set; }
-        public float PowerFactorTotal { get; set; }
-        public float Frequency { get; set; }
+        public float? VoltageA { get; set; }
+        public float? VoltageB { get; set; }
+        public float? VoltageC { get; set; }
+        public float? VoltageAB { get; set; }
+        public float? VoltageBC { get; set; }
+        public float? VoltageCA { get; set; }
+        public float? CurrentA { get; set; }
+        public float? CurrentB { get; set; }
+        public float? CurrentC { get; set; }
+        public float? ActivePowerTotal { get; set; }
+        public float? ReactivePowerTotal { get; set; }
+        public float? ApparentPowerTotal { get; set; }
+        public float? PowerFactorTotal { get; set; }
+        public float? Frequency { get; set; }
     }
 
     public class EnergyData
     {
-        public float ForwardActiveEnergy { get; set; }
-        public float ReverseActiveEnergy { get; set; }
-        public float ForwardReactiveEnergy { get; set; }
-        public float ReverseReactiveEnergy { get; set; }
+        public float? ForwardActiveEnergy { get; set; }
+        public float? ReverseActiveEnergy { get; set; }
+        public float? ForwardReactiveEnergy { get; set; }
+        public float? ReverseReactiveEnergy { get; set; }
     }
 
     public class PowerQualityData
     {
-        public float CurrentTHDA { get; set; }
-        public float CurrentTHDB { get; set; }
-        public float CurrentTHDC { get; set; }
-        public float VoltageTHDA { get; set; }
-        public float VoltageTHDB { get; set; }
-        public float VoltageTHDC { get; set; }
-        public float VoltageUnbalance { get; set; }
-        public float CurrentUnbalance { get; set; }
+        public float? CurrentTHDA { get; set; }
+        public float? CurrentTHDB { get; set; }
+        public float? CurrentTHDC { get; set; }
+        public float? VoltageTHDA { get; set; }
+        public float? VoltageTHDB { get; set; }
+        public float? VoltageTHDC { get; set; }
+        public float? VoltageUnbalance { get; set; }
+        public float? CurrentUnbalance { get; set; }
     }
 
     public class MeterInfo
@@ -77,7 +77,8 @@ namespace MeterAcquisition
         public byte SlaveAddress { get; set; }
         public bool IsToolbar { get; set; }
         public string DeviceModel { get; set; }
-        public DateTime? LastSuccessfulReadTime { get; set; }
+        /// <summary>P1-8：改为 DateTimeOffset，避免与遥测时间用不同基准。</summary>
+        public DateTimeOffset? LastSuccessfulReadTime { get; set; }
 
         /// <summary>连续采集失败次数。P0-8：让"某台表一直读不到"从日志里可见。</summary>
         public int ConsecutiveFailureCount { get; set; }

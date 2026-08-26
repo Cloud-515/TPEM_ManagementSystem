@@ -118,7 +118,7 @@ namespace MeterAcquisition
 
                 if (result.HasAnyData)
                 {
-                    meter.LastSuccessfulReadTime = DateTime.Now;
+                    meter.LastSuccessfulReadTime = DateTimeOffset.UtcNow;
                     results.Add(result);
                 }
                 else

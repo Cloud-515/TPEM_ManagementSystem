@@ -7,10 +7,17 @@ import java.util.List;
 import org.apache.ibatis.annotations.Param;
 import com.ruoyi.system.domain.MeterCard;
 import com.ruoyi.system.domain.MeterEnergyReading;
+import com.ruoyi.system.domain.MeterThreshold;
 
 public interface MeterCardMapper
 {
     public List<MeterCard> selectMeterCards();
+
+    /**
+     * P1-1：读取判定阈值。与上位机、入库服务读的是同一张 meter_threshold 表，
+     * 保证三端对同一台表给出一致的合格/不合格结论。
+     */
+    public List<MeterThreshold> selectMeterThresholds();
 
     public List<MeterCard> selectRealtimeHistoryTrend(MeterCard query);
 

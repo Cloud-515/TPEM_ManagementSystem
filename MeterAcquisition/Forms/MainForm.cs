@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Configuration;
 using System.Drawing;
@@ -15,6 +15,7 @@ using MeterAcquisition.Thermostat.Forms;
 using MeterAcquisition.HeatPump.Services;
 using MeterAcquisition.Properties;
 using Tpem.Diagnostics;
+using Tpem.Thresholds;
 using ThreadingCancellationToken = System.Threading.CancellationToken;
 
 namespace MeterAcquisition
@@ -40,6 +41,10 @@ namespace MeterAcquisition
         private bool _isRefreshing = false;
         /// <summary>正在退出。P0-5：置位后采集周期不再触碰控件与串口。</summary>
         private bool _isShuttingDown = false;
+        // P1-7：三类采样各自的上次执行时刻（UTC）。用时钟而不是 tick 计数判断是否到期。
+        private DateTime _lastRealtimeSampleUtc = DateTime.MinValue;
+        private DateTime _lastEnergySampleUtc = DateTime.MinValue;
+        private DateTime _lastQualitySampleUtc = DateTime.MinValue;
         private int _refreshTickCount;
         private readonly int _realTimeIntervalSeconds;
         private readonly int _energyIntervalSeconds;
@@ -166,7 +171,36 @@ namespace MeterAcquisition
             nudScanEnd.ValueChanged += ScanRange_ValueChanged;
             LoadDashboardScanRangeSettings();
             clockTimer.Start();
+            LogEffectiveThresholds();
             this.Shown += MainForm_Shown;
+        }
+
+        /// <summary>
+        /// 启动时把生效的判定阈值写进日志（P1-1）。
+        /// 现场排查"这台表为什么显示电压异常"时，先看这一行就能确认用的是哪套阈值。
+        /// </summary>
+        private void LogEffectiveThresholds()
+        {
+            try
+            {
+                var set = SharedThresholdProvider.Resolve(_siteCode, null, null);
+                var voltage = set.Get(ThresholdSet.VoltagePhase);
+                var pf = set.Get(ThresholdSet.PowerFactorTotal);
+                AppLogger.Info(
+                    "Threshold",
+                    string.Format(
+                        CultureInfo.InvariantCulture,
+                        "判定阈值来源: {0}；相电压 {1}~{2} V，总功率因数下限 {3}，带电门槛 {4} V。",
+                        SharedThresholdProvider.UsingFallback ? "内置兜底值（数据库不可用）" : "meter_threshold 表",
+                        voltage != null && voltage.MinValue.HasValue ? voltage.MinValue.Value.ToString("0.##", CultureInfo.InvariantCulture) : "-",
+                        voltage != null && voltage.MaxValue.HasValue ? voltage.MaxValue.Value.ToString("0.##", CultureInfo.InvariantCulture) : "-",
+                        pf != null && pf.MinValue.HasValue ? pf.MinValue.Value.ToString("0.###", CultureInfo.InvariantCulture) : "-",
+                        set.EnergizedThreshold.ToString("0.##", CultureInfo.InvariantCulture)));
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Warn("Threshold", "输出生效阈值失败（不影响采集）。", ex);
+            }
         }
 
         private async void MainForm_Shown(object sender, EventArgs e)
@@ -2171,7 +2205,7 @@ namespace MeterAcquisition
                 BoxCode = ResolveBoxCode(box),
                 BoxName = box.Name,
                 Action = action,
-                ScanTime = DateTime.Now,
+                ScanTime = GetBeijingNow(),
                 Meters = box.Meters
                     .Select(BuildRegistryItem)
                     .OrderBy(item => item.SlaveAddress)
@@ -2195,7 +2229,7 @@ namespace MeterAcquisition
                 BoxCode = meter.IsToolbar ? _toolbarBoxCode : _dashboardBoxCode,
                 BoxName = meter.Location,
                 Action = "disable",
-                ScanTime = DateTime.Now,
+                ScanTime = GetBeijingNow(),
                 Meters = new List<MeterRegistryItem> { BuildRegistryItem(meter) }
             };
 
@@ -2569,9 +2603,14 @@ namespace MeterAcquisition
             try
             {
                 _refreshTickCount++;
-                var readRealTime = _refreshTickCount % _realTimeIntervalSeconds == 0;
-                var readEnergy = _refreshTickCount % _energyIntervalSeconds == 0;
-                var readQuality = _refreshTickCount % _qualityIntervalSeconds == 0;
+                // P1-7：采样是否到期改为按时钟判断，不再用 tick 计数取模。
+                // 原实现的问题：_isRefreshing 跳过的 tick 不计数，一轮轮询超过 1 秒
+                // （多台表 × 最长 500ms 超时，很容易）就会整体漂移 ——
+                // EnergyIntervalSeconds=60 实际可能变成 120、180 秒，配置值与真实行为对不上。
+                var nowUtc = DateTime.UtcNow;
+                var readRealTime = IsSampleDue(ref _lastRealtimeSampleUtc, nowUtc, _realTimeIntervalSeconds);
+                var readEnergy = IsSampleDue(ref _lastEnergySampleUtc, nowUtc, _energyIntervalSeconds);
+                var readQuality = IsSampleDue(ref _lastQualitySampleUtc, nowUtc, _qualityIntervalSeconds);
                 RealTimeData rtData = null;
                 EnergyData enData = null;
                 PowerQualityData qlData = null;
@@ -2637,6 +2676,22 @@ namespace MeterAcquisition
             }
         }
 
+        /// <summary>
+        /// P1-7：按时钟判断某类采样是否到期。到期即记录本次时刻并返回 true。
+        /// 首次调用（字段为 MinValue）一定到期，保证连接后立刻采一轮。
+        /// </summary>
+        private static bool IsSampleDue(ref DateTime lastUtc, DateTime nowUtc, int intervalSeconds)
+        {
+            var interval = TimeSpan.FromSeconds(intervalSeconds < 1 ? 1 : intervalSeconds);
+            if (lastUtc != DateTime.MinValue && nowUtc - lastUtc < interval)
+            {
+                return false;
+            }
+
+            lastUtc = nowUtc;
+            return true;
+        }
+
         private void UpdateAllCardLabels()
         {
             if (_flpBoxContainer == null) return;
@@ -2670,13 +2725,16 @@ namespace MeterAcquisition
             var (statusText, statusColor, isOffline) = GetMeterDisplayStatus(meter);
             if (!isOffline && meter.RealTime != null)
             {
-                float powerKw = meter.RealTime.ActivePowerTotal / 1000f;
-                float maxCurrent = GetMaxCurrent(meter.RealTime);
+                var powerKw = meter.RealTime.ActivePowerTotal.HasValue
+                    ? meter.RealTime.ActivePowerTotal.Value / 1000f
+                    : (float?)null;
+                var powerText = FormatMeasure(powerKw, "F1") + " kW";
+                var currentText = FormatMeasure(GetMaxCurrent(meter.RealTime), "F1") + " A";
 
-                if (tags.PowerLabel.Text != powerKw.ToString("F1") + " kW")
-                    tags.PowerLabel.Text = powerKw.ToString("F1") + " kW";
-                if (tags.CurrentLabel.Text != maxCurrent.ToString("F1") + " A")
-                    tags.CurrentLabel.Text = maxCurrent.ToString("F1") + " A";
+                if (tags.PowerLabel.Text != powerText)
+                    tags.PowerLabel.Text = powerText;
+                if (tags.CurrentLabel.Text != currentText)
+                    tags.CurrentLabel.Text = currentText;
             }
             else
             {
@@ -2736,6 +2794,8 @@ namespace MeterAcquisition
         {
             return new MeterTelemetryMessage
             {
+                MessageType = "meter.telemetry.v1",
+                MessageId = Guid.NewGuid(),
                 SiteCode = _siteCode,
                 BoxCode = meter.IsToolbar ? _toolbarBoxCode : _dashboardBoxCode,
                 MeterCode = meter.Id,
@@ -2798,6 +2858,35 @@ namespace MeterAcquisition
         {
             var value = ConfigurationManager.AppSettings[key];
             return int.TryParse(value, out var parsed) && parsed > 0 ? parsed : defaultValue;
+        }
+
+        private static readonly Lazy<ThresholdProvider> LazyThresholdProvider =
+            new Lazy<ThresholdProvider>(CreateThresholdProvider, true);
+
+        /// <summary>
+        /// 判定阈值提供者（P1-1）。全进程一份，带缓存与断库兜底。
+        /// 界面各处、详情窗口都从这里取，保证同一时刻用的是同一套阈值。
+        /// </summary>
+        internal static ThresholdProvider SharedThresholdProvider
+        {
+            get { return LazyThresholdProvider.Value; }
+        }
+
+        private static ThresholdProvider CreateThresholdProvider()
+        {
+            string connectionString = null;
+            foreach (var name in new[] { "MeterDb", "MeterAcquisition" })
+            {
+                var settings = ConfigurationManager.ConnectionStrings[name];
+                if (settings != null && !string.IsNullOrWhiteSpace(settings.ConnectionString))
+                {
+                    connectionString = settings.ConnectionString;
+                    break;
+                }
+            }
+
+            var refreshSeconds = GetPositiveIntAppSetting("ThresholdRefreshSeconds", 300);
+            return new ThresholdProvider(connectionString, TimeSpan.FromSeconds(refreshSeconds));
         }
 
         /// <summary>
@@ -2962,7 +3051,7 @@ namespace MeterAcquisition
 
             if (meter.LastSuccessfulReadTime.HasValue)
             {
-                var elapsed = DateTime.Now - meter.LastSuccessfulReadTime.Value;
+                var elapsed = DateTimeOffset.UtcNow - meter.LastSuccessfulReadTime.Value;
                 if (elapsed.TotalSeconds > _offlineTimeoutSeconds)
                 {
                     return ("● 设备掉线", Color.OrangeRed, true);
@@ -2971,7 +3060,13 @@ namespace MeterAcquisition
 
             if (meter.RealTime != null)
             {
-                var (text, color) = DetermineMeterStatus(meter.RealTime);
+                // P1-1：把电能质量数据一并带上，阈值按该表的站点/配电箱/表号解析，
+                // 使界面结论与入库服务、网页端一致。
+                var thresholds = SharedThresholdProvider.Resolve(
+                    _siteCode,
+                    meter.IsToolbar ? _toolbarBoxCode : _dashboardBoxCode,
+                    meter.Id);
+                var (text, color) = DetermineMeterStatus(meter.RealTime, meter.Quality, thresholds);
                 return (text, color, false);
             }
 
@@ -3056,36 +3151,100 @@ namespace MeterAcquisition
             return sortedValues[lowerIndex] + (sortedValues[upperIndex] - sortedValues[lowerIndex]) * weight;
         }
 
-        internal static float GetMaxCurrent(RealTimeData data)
+        /// <summary>
+        /// 三相电流里最大的那一相。P1-5：全都没采到时返回 null，而不是 0 ——
+        /// 0 A 是一个有意义的测量结果，不能用来表示"没测到"。
+        /// </summary>
+        internal static float? GetMaxCurrent(RealTimeData data)
         {
             if (data == null)
-                return 0f;
+                return null;
 
-            return new[] { data.CurrentA, data.CurrentB, data.CurrentC }
-                .Where(v => !float.IsNaN(v) && !float.IsInfinity(v))
-                .Select(Math.Abs)
-                .DefaultIfEmpty(0f)
-                .Max();
+            var values = new[] { data.CurrentA, data.CurrentB, data.CurrentC }
+                .Where(v => v.HasValue && !float.IsNaN(v.Value) && !float.IsInfinity(v.Value))
+                .Select(v => Math.Abs(v.Value))
+                .ToList();
+
+            return values.Count == 0 ? (float?)null : values.Max();
         }
 
+        /// <summary>P1-5：可空测量值的统一显示。缺数据、NaN、无穷都显示 "--"。</summary>
+        internal static string FormatMeasure(float? value, string format)
+        {
+            if (!value.HasValue || float.IsNaN(value.Value) || float.IsInfinity(value.Value))
+            {
+                return "--";
+            }
+
+            return value.Value.ToString(format, CultureInfo.InvariantCulture);
+        }
+
+        /// <summary>
+        /// P1-1：界面状态判定改为走共用判定引擎 + meter_threshold 表，
+        /// 不再在这里硬编码 180~260V / PF 0.5 / 40~70Hz。
+        /// 这样上位机、入库服务、网页端对同一台表给出的结论才会一致。
+        ///
+        /// 保留静态重载是为了兼容 MeterDetailsForm 的既有调用；阈值来源仍是同一个提供者。
+        /// </summary>
         internal static (string text, Color color) DetermineMeterStatus(RealTimeData data)
         {
-            if (data == null)
+            return DetermineMeterStatus(data, null, SharedThresholdProvider.Resolve(null, null, null));
+        }
+
+        internal static (string text, Color color) DetermineMeterStatus(
+            RealTimeData realtime,
+            PowerQualityData quality,
+            ThresholdSet thresholds)
+        {
+            if (realtime == null)
                 return ("● 无数据", Color.Gray);
 
-            if ((data.VoltageA < 50 && data.VoltageB < 50 && data.VoltageC < 50) ||
-                data.Frequency < 40 || data.Frequency > 70)
-                return ("● 异常", Color.Red);
+            var sample = BuildSampleView(realtime, quality);
 
-            if (data.VoltageA < 180 || data.VoltageA > 260 ||
-                data.VoltageB < 180 || data.VoltageB > 260 ||
-                data.VoltageC < 180 || data.VoltageC > 260)
-                return ("● 电压异常", Color.Orange);
+            // 未带电时不做质量判定：停电/空载的 0V、0 PF 不是"异常"，是"没在运行"。
+            if (!MeterQualityEvaluator.IsEnergized(thresholds, sample))
+                return ("● 未带电", Color.Gray);
 
-            if (data.PowerFactorTotal < 0.5f)
-                return ("● 功率因数低", Color.Orange);
+            var hits = MeterQualityEvaluator.Evaluate(thresholds, sample);
+            if (hits.Count == 0)
+                return ("● 运行正常", Color.Green);
 
-            return ("● 运行正常", Color.Green);
+            // critical 优先显示，其余取第一条。
+            var worst = hits.FirstOrDefault(h => h.AlarmLevelIsCritical) ?? hits[0];
+            var color = worst.AlarmLevelIsCritical ? Color.Red : Color.Orange;
+            var suffix = hits.Count > 1 ? " 等" + hits.Count + "项" : string.Empty;
+            return ("● " + worst.AlarmName + suffix, color);
+        }
+
+        /// <summary>把上位机的两个 DTO 映射成判定引擎的输入视图（P1-1）。</summary>
+        internal static MeterSampleView BuildSampleView(RealTimeData realtime, PowerQualityData quality)
+        {
+            var view = new MeterSampleView();
+            if (realtime != null)
+            {
+                view.VoltageA = realtime.VoltageA;
+                view.VoltageB = realtime.VoltageB;
+                view.VoltageC = realtime.VoltageC;
+                view.CurrentA = realtime.CurrentA;
+                view.CurrentB = realtime.CurrentB;
+                view.CurrentC = realtime.CurrentC;
+                view.PowerFactorTotal = realtime.PowerFactorTotal;
+                view.Frequency = realtime.Frequency;
+            }
+
+            if (quality != null)
+            {
+                view.VoltageThdA = quality.VoltageTHDA;
+                view.VoltageThdB = quality.VoltageTHDB;
+                view.VoltageThdC = quality.VoltageTHDC;
+                view.CurrentThdA = quality.CurrentTHDA;
+                view.CurrentThdB = quality.CurrentTHDB;
+                view.CurrentThdC = quality.CurrentTHDC;
+                view.VoltageUnbalance = quality.VoltageUnbalance;
+                view.CurrentUnbalance = quality.CurrentUnbalance;
+            }
+
+            return view;
         }
 
         #endregion

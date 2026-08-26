@@ -113,6 +113,9 @@
     <Compile Include="..\MeterAcquisition\Common\AppLogger.cs">
       <Link>Common\AppLogger.cs</Link>
     </Compile>
+    <Compile Include="..\MeterAcquisition\Common\MeterThresholds.cs">
+      <Link>Common\MeterThresholds.cs</Link>
+    </Compile>
     <Compile Include="Program.cs" />
     <Compile Include="SharedContracts.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />

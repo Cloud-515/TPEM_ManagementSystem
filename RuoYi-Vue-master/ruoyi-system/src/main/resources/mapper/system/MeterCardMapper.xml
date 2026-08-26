@@ -4,6 +4,30 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
 "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.ruoyi.system.mapper.MeterCardMapper">
 
+    <!--
+      P1-1 判定阈值。与上位机、入库服务共用同一张 meter_threshold 表，
+      三端不再各自硬编码 198/242/0.85 之类的常量。
+      作用域优先级由服务端按 meter > box > site > global 合并。
+    -->
+    <resultMap type="MeterThreshold" id="MeterThresholdResult">
+        <result property="scope" column="scope" />
+        <result property="scopeKey" column="scope_key" />
+        <result property="metricCode" column="metric_code" />
+        <result property="metricName" column="metric_name" />
+        <result property="unit" column="unit" />
+        <result property="minValue" column="min_value" />
+        <result property="maxValue" column="max_value" />
+        <result property="alarmEnabled" column="is_alarm_enabled" />
+    </resultMap>
+
+    <select id="selectMeterThresholds" resultMap="MeterThresholdResult">
+        select scope, scope_key, metric_code, metric_name, unit,
+               min_value, max_value, is_alarm_enabled
+        from meter_threshold
+        order by metric_code
+    </select>
+
+
     <resultMap type="MeterCard" id="MeterCardResult">
         <id property="meterId" column="meter_id" />
         <result property="meterCode" column="meter_code" />

@@ -1,5 +1,6 @@
-﻿using System;
+using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Configuration;
 using System.Globalization;
 using System.Linq;
@@ -13,6 +14,7 @@ using Npgsql;
 using NpgsqlTypes;
 using Newtonsoft.Json;
 using Tpem.Diagnostics;
+using Tpem.Thresholds;
 
 namespace MeterIngestionWorker
 {
@@ -30,6 +32,16 @@ namespace MeterIngestionWorker
         private static long _droppedEnvelopes;
         private static long _processedEnvelopes;
         private static long _failedEnvelopes;
+
+        /// <summary>
+        /// 报警去抖计数器（P1-6）。键为 "meterId|alarmCode"，值为连续命中次数。
+        /// 放内存即可：进程重启后最多重新累计一遍去抖，不会误报也不会漏报既有告警。
+        /// </summary>
+        private static readonly ConcurrentDictionary<string, int> AlarmDebounce =
+            new ConcurrentDictionary<string, int>(StringComparer.Ordinal);
+
+        /// <summary>判定阈值提供者（P1-1）。与上位机读同一张 meter_threshold 表。</summary>
+        private static ThresholdProvider _thresholdProvider;
         private static readonly JsonSerializerSettings JsonSettings = new JsonSerializerSettings
         {
             DateFormatString = "o",
@@ -71,6 +83,7 @@ namespace MeterIngestionWorker
         private static int _maxQueueLength;
         private static TimeSpan _mqttReconnectMaxDelay;
         private static TimeSpan _heartbeatInterval;
+        private static int _messageLogRetentionHours;
 
         private static async Task<int> Main()
         {
@@ -92,6 +105,7 @@ namespace MeterIngestionWorker
                 AppLogger.ParseLevel(ConfigurationManager.AppSettings["LogLevel"], Tpem.Diagnostics.LogLevel.Info),
                 true);
             InstallGlobalExceptionHandlers();
+            WarmUpThresholds();
 
             var exitCode = 0;
 
@@ -163,6 +177,10 @@ namespace MeterIngestionWorker
             MessageQueue = new BlockingCollection<MqttEnvelope>(new ConcurrentQueue<MqttEnvelope>(), _maxQueueLength);
             _mqttReconnectMaxDelay = TimeSpan.FromSeconds(GetPositiveIntAppSetting("MqttReconnectMaxDelaySeconds", 60));
             _heartbeatInterval = TimeSpan.FromSeconds(GetPositiveIntAppSetting("HeartbeatIntervalSeconds", 300));
+            _messageLogRetentionHours = GetPositiveIntAppSetting("MessageLogRetentionHours", 48);
+            _thresholdProvider = new ThresholdProvider(
+                _mysqlConnectionString,
+                TimeSpan.FromSeconds(GetPositiveIntAppSetting("ThresholdRefreshSeconds", 300)));
 
             RealtimeHistoryInterval = TimeSpan.FromSeconds(GetPositiveIntAppSetting("RealtimeHistoryIntervalSeconds", 30));
             EnergyHistoryInterval = TimeSpan.FromMinutes(GetPositiveIntAppSetting("EnergyHistoryIntervalMinutes", 15));
@@ -187,6 +205,29 @@ namespace MeterIngestionWorker
         /// P0-1：后台服务的兜底。没有这两道，一个后台线程异常会直接终止进程，
         /// 而现场只会看到"服务窗口不见了"，没有任何原因记录。
         /// </summary>
+        /// <summary>
+        /// 启动时先加载一次判定阈值并把生效值写进日志（P1-1）。
+        /// 现场排查"为什么这台表被判成异常"时，第一步就是确认当时用的是哪套阈值、
+        /// 是来自数据库还是内置兜底。等到第一条遥测到达才加载会让这件事无从追溯。
+        /// </summary>
+        private static void WarmUpThresholds()
+        {
+            var set = _thresholdProvider.Resolve(_siteCode, null, null);
+            var source = _thresholdProvider.UsingFallback ? "内置兜底值（数据库不可用）" : "meter_threshold 表";
+            var voltage = set.Get(ThresholdSet.VoltagePhase);
+            var pf = set.Get(ThresholdSet.PowerFactorTotal);
+            AppLogger.Info(
+                "Threshold",
+                string.Format(
+                    CultureInfo.InvariantCulture,
+                    "判定阈值来源: {0}；相电压 {1}~{2} V，总功率因数下限 {3}，带电门槛 {4} V。",
+                    source,
+                    voltage != null && voltage.MinValue.HasValue ? voltage.MinValue.Value.ToString("0.##", CultureInfo.InvariantCulture) : "-",
+                    voltage != null && voltage.MaxValue.HasValue ? voltage.MaxValue.Value.ToString("0.##", CultureInfo.InvariantCulture) : "-",
+                    pf != null && pf.MinValue.HasValue ? pf.MinValue.Value.ToString("0.###", CultureInfo.InvariantCulture) : "-",
+                    set.EnergizedThreshold.ToString("0.##", CultureInfo.InvariantCulture)));
+        }
+
         private static void InstallGlobalExceptionHandlers()
         {
             AppDomain.CurrentDomain.UnhandledException += (sender, e) =>
@@ -402,6 +443,8 @@ namespace MeterIngestionWorker
                             Interlocked.Read(ref _processedEnvelopes),
                             Interlocked.Read(ref _failedEnvelopes),
                             Interlocked.Read(ref _droppedEnvelopes)));
+
+                    PruneMeterMessageLog();
                 }
             }
             catch (OperationCanceledException)
@@ -538,6 +581,16 @@ namespace MeterIngestionWorker
                     connection.Open();
                     using (var transaction = connection.BeginTransaction())
                     {
+                        // P1-4：库级幂等。放在事务内 —— 若后续入库失败回滚，去重标记也一并回滚，
+                        // 消息才有机会被重投重试；若放事务外，一条失败的消息会被永久标记为已处理。
+                        if (!TryMarkMeterMessageProcessed(connection, transaction, envelope, telemetry))
+                        {
+                            transaction.Commit();
+                            AppLogger.Debug("Dedup", "电表消息已处理过，跳过重复投递: " + envelope.Topic + " msgId=" + telemetry.MessageId);
+                            MarkMessageLogProcessed(connection, null, logId);
+                            return;
+                        }
+
                         long meterId = GetMeterId(connection, transaction, telemetry.MeterCode, telemetry.SiteCode);
 
                         if (telemetry.RealTime != null)
@@ -548,7 +601,12 @@ namespace MeterIngestionWorker
                                 InsertRealtimeHistory(connection, transaction, meterId, telemetry);
                             }
 
-                            EvaluateRealtimeAlarms(connection, transaction, meterId, telemetry);
+                            EvaluateRealtimeAlarms(
+                                connection,
+                                transaction,
+                                meterId,
+                                telemetry,
+                                _thresholdProvider.Resolve(telemetry.SiteCode, telemetry.BoxCode, telemetry.MeterCode));
                         }
 
                         if (telemetry.Energy != null)
@@ -571,6 +629,9 @@ namespace MeterIngestionWorker
 
                         UpsertMeterStatus(connection, transaction, meterId, telemetry, null);
                         UpdateMeterLastSeen(connection, transaction, meterId, telemetry.CollectTime);
+                        // P1-2：收到遥测说明设备已恢复，成对地把 offline 告警恢复掉，
+                        // 让 alarm_event 里 offline 事件有明确的 start_time / end_time / duration。
+                        ClearAlarm(connection, transaction, meterId, "offline", telemetry.CollectTime, null);
                         transaction.Commit();
                     }
                 }
@@ -1260,7 +1321,7 @@ updated_at = CURRENT_TIMESTAMP;";
                 command.Parameters.AddWithValue("@location", (object)(item.Location ?? registry.BoxName ?? string.Empty));
                 command.Parameters.AddWithValue("@is_toolbar", item.IsToolbar);
                 command.Parameters.AddWithValue("@mqtt_topic", BuildMeterTopic(registry.SiteCode, registry.BoxCode, item.MeterCode));
-                command.Parameters.AddWithValue("@last_seen_time", ToUtcOffset(registry.ScanTime));
+                command.Parameters.AddWithValue("@last_seen_time", registry.ScanTime.ToUniversalTime());
                 command.ExecuteNonQuery();
             }
 
@@ -1284,15 +1345,15 @@ WHERE id = @id;";
 
             using (var command = new NpgsqlCommand(sql, connection, transaction))
             {
-                command.Parameters.AddWithValue("@last_seen_time", ToUtcOffset(registry.ScanTime));
+                command.Parameters.AddWithValue("@last_seen_time", registry.ScanTime.ToUniversalTime());
                 command.Parameters.AddWithValue("@id", meterId);
                 command.ExecuteNonQuery();
             }
 
-            UpsertMeterStatus(connection, transaction, meterId, ToUtcOffset(registry.ScanTime), null, null, null, "disabled", false);
+            UpsertMeterStatus(connection, transaction, meterId, registry.ScanTime, null, null, null, "disabled", false);
         }
 
-        private static void MarkMissingMetersOffline(NpgsqlConnection connection, NpgsqlTransaction transaction, long siteId, long boxId, System.Collections.Generic.HashSet<long> activeMeterIds, DateTime scanTime)
+        private static void MarkMissingMetersOffline(NpgsqlConnection connection, NpgsqlTransaction transaction, long siteId, long boxId, HashSet<long> activeMeterIds, DateTimeOffset scanTime)
         {
             const string sql = @"
 SELECT id
@@ -1360,7 +1421,10 @@ apparent_power_total = EXCLUDED.apparent_power_total,
 power_factor_total = EXCLUDED.power_factor_total,
 frequency = EXCLUDED.frequency,
 data_quality = EXCLUDED.data_quality,
-updated_at = CURRENT_TIMESTAMP;";
+updated_at = CURRENT_TIMESTAMP
+-- P1-3 乱序保护：迟到的消息不得把更新的值覆盖回旧值。
+-- 热泵与温控器链路早就有这个守卫，电表链路此前缺失，ProcessWorkers>1 时尤其容易命中。
+WHERE meter_realtime_latest.collect_time <= EXCLUDED.collect_time;";
 
             using (var command = new NpgsqlCommand(sql, connection, transaction))
             {
@@ -1409,7 +1473,10 @@ forward_active_energy = EXCLUDED.forward_active_energy,
 reverse_active_energy = EXCLUDED.reverse_active_energy,
 forward_reactive_energy = EXCLUDED.forward_reactive_energy,
 reverse_reactive_energy = EXCLUDED.reverse_reactive_energy,
-updated_at = CURRENT_TIMESTAMP;";
+updated_at = CURRENT_TIMESTAMP
+-- P1-3 乱序保护：迟到的消息不得把更新的值覆盖回旧值。
+-- 热泵与温控器链路早就有这个守卫，电表链路此前缺失，ProcessWorkers>1 时尤其容易命中。
+WHERE meter_energy_latest.collect_time <= EXCLUDED.collect_time;";
 
             using (var command = new NpgsqlCommand(sql, connection, transaction))
             {
@@ -1463,7 +1530,10 @@ voltage_thd_b = EXCLUDED.voltage_thd_b,
 voltage_thd_c = EXCLUDED.voltage_thd_c,
 voltage_unbalance = EXCLUDED.voltage_unbalance,
 current_unbalance = EXCLUDED.current_unbalance,
-updated_at = CURRENT_TIMESTAMP;";
+updated_at = CURRENT_TIMESTAMP
+-- P1-3 乱序保护：迟到的消息不得把更新的值覆盖回旧值。
+-- 热泵与温控器链路早就有这个守卫，电表链路此前缺失，ProcessWorkers>1 时尤其容易命中。
+WHERE meter_power_quality_latest.collect_time <= EXCLUDED.collect_time;";
 
             using (var command = new NpgsqlCommand(sql, connection, transaction))
             {
@@ -1585,113 +1655,254 @@ LIMIT 1;";
             }
         }
 
-        private static void EvaluateRealtimeAlarms(NpgsqlConnection connection, NpgsqlTransaction transaction, long meterId, MeterTelemetryMessage telemetry)
+        /// <summary>
+        /// 报警评估（P1-1 + P1-6）。
+        ///
+        /// 改动要点：
+        ///   1. 阈值不再来自 App.config，而是走 meter_threshold 表 + 共用判定引擎，
+        ///      与上位机界面、网页端用同一套口径；
+        ///   2. 只有连续命中 debounce_count 次才置位，避免单次抖动产生一条告警；
+        ///   3. 恢复要满足滞回条件（低限需回升到 min+margin，高限需回落到 max-margin），
+        ///      避免在阈值附近反复置位/恢复；
+        ///   4. 未带电时跳过所有 require_energized 的判定项，停电不再被误报成
+        ///      "电压过低 + 功率因数过低"。
+        ///
+        /// 改动前实测：现网 259 条 power_factor_low 全部来自同一台表，报警值密集分布在
+        /// 0.499x（阈值 0.5 附近），其中 238 条持续时间不足 5 秒 —— 典型的缺去抖与滞回。
+        /// </summary>
+        private static void EvaluateRealtimeAlarms(
+            NpgsqlConnection connection,
+            NpgsqlTransaction transaction,
+            long meterId,
+            MeterTelemetryMessage telemetry,
+            ThresholdSet thresholds)
         {
-            var realtime = telemetry.RealTime;
-            if (realtime == null)
+            var sample = BuildSampleView(telemetry);
+            if (sample == null)
             {
                 return;
             }
 
-            UpsertAlarmState(connection, transaction, meterId, "voltage_low", "电压过低", "warning",
-                realtime.VoltageA < AlarmVoltageLowThreshold || realtime.VoltageB < AlarmVoltageLowThreshold || realtime.VoltageC < AlarmVoltageLowThreshold,
-                Math.Min(realtime.VoltageA, Math.Min(realtime.VoltageB, realtime.VoltageC)), AlarmVoltageLowThreshold, telemetry.CollectTime);
-
-            UpsertAlarmState(connection, transaction, meterId, "voltage_high", "电压过高", "warning",
-                realtime.VoltageA > AlarmVoltageHighThreshold || realtime.VoltageB > AlarmVoltageHighThreshold || realtime.VoltageC > AlarmVoltageHighThreshold,
-                Math.Max(realtime.VoltageA, Math.Max(realtime.VoltageB, realtime.VoltageC)), AlarmVoltageHighThreshold, telemetry.CollectTime);
-
-            var maxCurrent = Math.Max(realtime.CurrentA, Math.Max(realtime.CurrentB, realtime.CurrentC));
-            UpsertAlarmState(connection, transaction, meterId, "current_high", "电流过高", "critical",
-                maxCurrent > AlarmCurrentHighThreshold,
-                maxCurrent, AlarmCurrentHighThreshold, telemetry.CollectTime);
-
-            UpsertAlarmState(connection, transaction, meterId, "power_factor_low", "功率因数过低", "warning",
-                realtime.PowerFactorTotal < AlarmPowerFactorLowThreshold,
-                realtime.PowerFactorTotal, AlarmPowerFactorLowThreshold, telemetry.CollectTime);
-        }
-
-        private static void UpsertAlarmState(NpgsqlConnection connection, NpgsqlTransaction transaction, long meterId, string alarmCode, string alarmName, string alarmLevel, bool isActive, float alarmValue, float thresholdValue, DateTimeOffset collectTime)
-        {
-            const string activeSql = @"
-SELECT id
-FROM alarm_event
-WHERE meter_id = @meter_id
-  AND alarm_code = @alarm_code
-  AND status = 'active'
-ORDER BY start_time DESC
-LIMIT 1;";
-
-            long activeId = 0;
-            using (var command = new NpgsqlCommand(activeSql, connection, transaction))
+            var hits = MeterQualityEvaluator.Evaluate(thresholds, sample);
+            var hitByCode = new Dictionary<string, ThresholdHit>(StringComparer.OrdinalIgnoreCase);
+            foreach (var hit in hits)
             {
-                command.Parameters.AddWithValue("@meter_id", meterId);
-                command.Parameters.AddWithValue("@alarm_code", alarmCode);
-                var result = command.ExecuteScalar();
-                if (result != null && result != DBNull.Value)
+                if (hit.IsAlarmEnabled)
                 {
-                    activeId = Convert.ToInt64(result, CultureInfo.InvariantCulture);
+                    hitByCode[hit.AlarmCode] = hit;
                 }
             }
 
-            if (isActive)
+            // 对"本次命中"的项累计去抖计数，达到门槛才置位。
+            foreach (var pair in hitByCode)
             {
-                if (activeId > 0)
+                var hit = pair.Value;
+                var stateKey = meterId + "|" + hit.AlarmCode;
+                var count = AlarmDebounce.AddOrUpdate(stateKey, 1, (k, v) => v + 1);
+                if (count < hit.DebounceCount)
                 {
-                    const string updateSql = @"
-UPDATE alarm_event
-SET alarm_value = @alarm_value,
-    threshold_value = @threshold_value,
-    updated_at = CURRENT_TIMESTAMP
-WHERE id = @id;";
-
-                    using (var command = new NpgsqlCommand(updateSql, connection, transaction))
-                    {
-                        command.Parameters.AddWithValue("@alarm_value", Convert.ToDecimal(alarmValue, CultureInfo.InvariantCulture));
-                        command.Parameters.AddWithValue("@threshold_value", Convert.ToDecimal(thresholdValue, CultureInfo.InvariantCulture));
-                        command.Parameters.AddWithValue("@id", activeId);
-                        command.ExecuteNonQuery();
-                    }
+                    AppLogger.Debug(
+                        "Alarm",
+                        string.Format(
+                            CultureInfo.InvariantCulture,
+                            "表 {0} 的 {1} 命中 {2}/{3} 次，未达去抖门槛，暂不置位（当前值 {4}）。",
+                            meterId, hit.AlarmCode, count, hit.DebounceCount, hit.Value));
+                    continue;
                 }
-                else
-                {
-                    const string insertSql = @"
+
+                SetAlarmActive(connection, transaction, meterId, hit, telemetry.CollectTime);
+            }
+
+            // 对"本次未命中"的已激活告警，检查是否满足滞回恢复条件。
+            ResolveRecoveredAlarms(connection, transaction, meterId, thresholds, sample, hitByCode, telemetry.CollectTime);
+        }
+
+        /// <summary>
+        /// 把入库服务的 DTO 映射成判定引擎的输入视图。与上位机 MainForm.BuildSampleView 对应，
+        /// 两端喂给引擎的是同一种形状，这是"判定口径唯一"的前提。
+        /// </summary>
+        private static MeterSampleView BuildSampleView(MeterTelemetryMessage telemetry)
+        {
+            if (telemetry == null || (telemetry.RealTime == null && telemetry.Quality == null))
+            {
+                return null;
+            }
+
+            var view = new MeterSampleView();
+            var rt = telemetry.RealTime;
+            if (rt != null)
+            {
+                view.VoltageA = rt.VoltageA;
+                view.VoltageB = rt.VoltageB;
+                view.VoltageC = rt.VoltageC;
+                view.CurrentA = rt.CurrentA;
+                view.CurrentB = rt.CurrentB;
+                view.CurrentC = rt.CurrentC;
+                view.PowerFactorTotal = rt.PowerFactorTotal;
+                view.Frequency = rt.Frequency;
+            }
+
+            var q = telemetry.Quality;
+            if (q != null)
+            {
+                view.VoltageThdA = q.VoltageTHDA;
+                view.VoltageThdB = q.VoltageTHDB;
+                view.VoltageThdC = q.VoltageTHDC;
+                view.CurrentThdA = q.CurrentTHDA;
+                view.CurrentThdB = q.CurrentTHDB;
+                view.CurrentThdC = q.CurrentTHDC;
+                view.VoltageUnbalance = q.VoltageUnbalance;
+                view.CurrentUnbalance = q.CurrentUnbalance;
+            }
+
+            return view;
+        }
+
+        /// <summary>
+        /// 置位或刷新一条告警。依赖迁移 003 建立的部分唯一索引
+        /// uq_alarm_event_active (meter_id, alarm_code) WHERE status='active'，
+        /// 因此一条 INSERT ... ON CONFLICT 就能完成，且并发下不会插出重复的 active 告警
+        /// （原实现是"先 SELECT 再 INSERT/UPDATE"，ProcessWorkers&gt;1 时存在竞态）。
+        /// </summary>
+        private static void SetAlarmActive(
+            NpgsqlConnection connection,
+            NpgsqlTransaction transaction,
+            long meterId,
+            ThresholdHit hit,
+            DateTimeOffset collectTime)
+        {
+            const string sql = @"
 INSERT INTO alarm_event
 (meter_id, alarm_code, alarm_name, alarm_level, alarm_value, threshold_value, status, start_time)
 VALUES
-(@meter_id, @alarm_code, @alarm_name, @alarm_level, @alarm_value, @threshold_value, 'active', @start_time);";
+(@meter_id, @alarm_code, @alarm_name, @alarm_level, @alarm_value, @threshold_value, 'active', @start_time)
+ON CONFLICT (meter_id, alarm_code) WHERE status = 'active' DO UPDATE SET
+alarm_name = EXCLUDED.alarm_name,
+alarm_level = EXCLUDED.alarm_level,
+alarm_value = EXCLUDED.alarm_value,
+threshold_value = EXCLUDED.threshold_value,
+updated_at = CURRENT_TIMESTAMP
+RETURNING (xmax = 0) AS inserted;";
 
-                    using (var command = new NpgsqlCommand(insertSql, connection, transaction))
-                    {
-                        command.Parameters.AddWithValue("@meter_id", meterId);
-                        command.Parameters.AddWithValue("@alarm_code", alarmCode);
-                        command.Parameters.AddWithValue("@alarm_name", alarmName);
-                        command.Parameters.AddWithValue("@alarm_level", alarmLevel);
-                        command.Parameters.AddWithValue("@alarm_value", Convert.ToDecimal(alarmValue, CultureInfo.InvariantCulture));
-                        command.Parameters.AddWithValue("@threshold_value", Convert.ToDecimal(thresholdValue, CultureInfo.InvariantCulture));
-                        command.Parameters.AddWithValue("@start_time", collectTime.ToUniversalTime());
-                        command.ExecuteNonQuery();
-                    }
+            using (var command = new NpgsqlCommand(sql, connection, transaction))
+            {
+                command.Parameters.AddWithValue("@meter_id", meterId);
+                command.Parameters.AddWithValue("@alarm_code", hit.AlarmCode);
+                command.Parameters.AddWithValue("@alarm_name", hit.AlarmName ?? hit.AlarmCode);
+                command.Parameters.AddWithValue("@alarm_level", hit.AlarmLevel ?? "warning");
+                command.Parameters.AddWithValue("@alarm_value", Convert.ToDecimal(hit.Value, CultureInfo.InvariantCulture));
+                command.Parameters.AddWithValue("@threshold_value", Convert.ToDecimal(hit.Threshold, CultureInfo.InvariantCulture));
+                command.Parameters.AddWithValue("@start_time", collectTime.ToUniversalTime());
+
+                var inserted = command.ExecuteScalar();
+                if (inserted is bool && (bool)inserted)
+                {
+                    AppLogger.Info(
+                        "Alarm",
+                        string.Format(
+                            CultureInfo.InvariantCulture,
+                            "置位告警 表{0} {1}（{2}），当前值 {3}，阈值 {4}，级别 {5}。",
+                            meterId, hit.AlarmCode, hit.AlarmName, hit.Value, hit.Threshold, hit.AlarmLevel));
                 }
+            }
+        }
 
+        /// <summary>
+        /// 对本次未命中的已激活告警做滞回恢复判定（P1-6）。
+        /// 只处理属于当前阈值集合的告警代码 —— offline 之类由离线监控负责，
+        /// 阈值表里已不存在的历史代码保持不动，避免静默改写历史。
+        /// </summary>
+        private static void ResolveRecoveredAlarms(
+            NpgsqlConnection connection,
+            NpgsqlTransaction transaction,
+            long meterId,
+            ThresholdSet thresholds,
+            MeterSampleView sample,
+            Dictionary<string, ThresholdHit> currentHits,
+            DateTimeOffset collectTime)
+        {
+            var bindings = MeterQualityEvaluator.EnumerateAlarmCodes(thresholds, MeterQualityEvaluator.AllMetricCodes);
+            if (bindings.Count == 0)
+            {
                 return;
             }
 
-            if (activeId > 0)
+            var activeCodes = LoadActiveAlarmCodes(connection, transaction, meterId);
+            if (activeCodes.Count == 0)
             {
-                const string clearSql = @"
+                return;
+            }
+
+            foreach (var binding in bindings)
+            {
+                if (!activeCodes.Contains(binding.AlarmCode) || currentHits.ContainsKey(binding.AlarmCode))
+                {
+                    continue;
+                }
+
+                var observed = MeterQualityEvaluator.GetObservedExtreme(sample, binding.Rule.MetricCode, binding.IsHigh);
+                if (!MeterQualityEvaluator.IsRecovered(binding.IsHigh, binding.Threshold, binding.Rule.RecoverMargin, observed))
+                {
+                    // 已经回到阈值内但还没越过滞回带，保持激活，避免反复置位/恢复。
+                    continue;
+                }
+
+                ClearAlarm(connection, transaction, meterId, binding.AlarmCode, collectTime, observed);
+                int removed;
+                AlarmDebounce.TryRemove(meterId + "|" + binding.AlarmCode, out removed);
+            }
+        }
+
+        private static HashSet<string> LoadActiveAlarmCodes(NpgsqlConnection connection, NpgsqlTransaction transaction, long meterId)
+        {
+            const string sql = "SELECT alarm_code FROM alarm_event WHERE meter_id = @meter_id AND status = 'active';";
+            var codes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            using (var command = new NpgsqlCommand(sql, connection, transaction))
+            {
+                command.Parameters.AddWithValue("@meter_id", meterId);
+                using (var reader = command.ExecuteReader())
+                {
+                    while (reader.Read())
+                    {
+                        codes.Add(reader.GetString(0));
+                    }
+                }
+            }
+
+            return codes;
+        }
+
+        private static void ClearAlarm(
+            NpgsqlConnection connection,
+            NpgsqlTransaction transaction,
+            long meterId,
+            string alarmCode,
+            DateTimeOffset endTime,
+            float? recoveredValue)
+        {
+            const string sql = @"
 UPDATE alarm_event
 SET status = 'cleared',
     end_time = @end_time,
     duration_seconds = GREATEST(0, CAST(EXTRACT(EPOCH FROM (@end_time - start_time)) AS bigint)),
     updated_at = CURRENT_TIMESTAMP
-WHERE id = @id;";
+WHERE meter_id = @meter_id
+  AND alarm_code = @alarm_code
+  AND status = 'active';";
 
-                using (var command = new NpgsqlCommand(clearSql, connection, transaction))
+            using (var command = new NpgsqlCommand(sql, connection, transaction))
+            {
+                command.Parameters.AddWithValue("@end_time", endTime.ToUniversalTime());
+                command.Parameters.AddWithValue("@meter_id", meterId);
+                command.Parameters.AddWithValue("@alarm_code", alarmCode);
+                if (command.ExecuteNonQuery() > 0)
                 {
-                    command.Parameters.AddWithValue("@end_time", collectTime.ToUniversalTime());
-                    command.Parameters.AddWithValue("@id", activeId);
-                    command.ExecuteNonQuery();
+                    AppLogger.Info(
+                        "Alarm",
+                        string.Format(
+                            CultureInfo.InvariantCulture,
+                            "恢复告警 表{0} {1}，恢复值 {2}。",
+                            meterId, alarmCode, recoveredValue.HasValue ? recoveredValue.Value.ToString("0.###", CultureInfo.InvariantCulture) : "-"));
                 }
             }
         }
@@ -1710,25 +1921,59 @@ WHERE id = @id;";
                 || HasAbsoluteOrRelativeChange(previous.CurrentB, current.CurrentB, CurrentAbsoluteChangeThreshold, CurrentRelativeChangeThreshold)
                 || HasAbsoluteOrRelativeChange(previous.CurrentC, current.CurrentC, CurrentAbsoluteChangeThreshold, CurrentRelativeChangeThreshold)
                 || HasAbsoluteOrRelativeChange(previous.ActivePowerTotal, current.ActivePowerTotal, PowerAbsoluteChangeThreshold, PowerRelativeChangeThreshold)
-                || Math.Abs(previous.PowerFactorTotal - current.PowerFactorTotal) >= PowerFactorChangeThreshold
-                || Math.Abs(previous.Frequency - current.Frequency) >= FrequencyChangeThreshold;
+                || HasAbsoluteChange(previous.PowerFactorTotal, current.PowerFactorTotal, PowerFactorChangeThreshold)
+                || HasAbsoluteChange(previous.Frequency, current.Frequency, FrequencyChangeThreshold);
         }
 
-        private static bool HasAbsoluteOrRelativeChange(float previous, float current, float absoluteThreshold, float relativeThreshold)
+        /// <summary>
+        /// P1-5：可空之后，"有值 → 无值"和"无值 → 有值"都算显著变化（该写一条历史，
+        /// 否则数据中断这件事在历史表里看不出来）；两边都无值则不算变化。
+        /// </summary>
+        private static bool HasAbsoluteChange(float? previous, float? current, float threshold)
         {
-            var absoluteDelta = Math.Abs(current - previous);
+            if (!previous.HasValue && !current.HasValue)
+            {
+                return false;
+            }
+
+            if (!previous.HasValue || !current.HasValue)
+            {
+                return true;
+            }
+
+            return Math.Abs(previous.Value - current.Value) >= threshold;
+        }
+
+        private static bool HasAbsoluteOrRelativeChange(float? previous, float? current, float absoluteThreshold, float relativeThreshold)
+        {
+            // P1-5：有值/无值之间的切换本身就是显著变化，必须留一条历史。
+            if (!previous.HasValue && !current.HasValue)
+            {
+                return false;
+            }
+
+            if (!previous.HasValue || !current.HasValue)
+            {
+                return true;
+            }
+
+            var absoluteDelta = Math.Abs(current.Value - previous.Value);
             if (absoluteDelta >= absoluteThreshold)
             {
                 return true;
             }
 
-            var baseline = Math.Max(Math.Abs(previous), 0.0001f);
+            var baseline = Math.Max(Math.Abs(previous.Value), 0.0001f);
             return absoluteDelta / baseline >= relativeThreshold;
         }
 
-        private static float ReadFloat(NpgsqlDataReader reader, int ordinal)
+        /// <summary>
+        /// P1-5：NULL 不再被读成 0f。数据库里的 NULL 表示"当时没采到"，
+        /// 读成 0 会让变化检测与报警判定把缺数据当成真实的 0 值。
+        /// </summary>
+        private static float? ReadFloat(NpgsqlDataReader reader, int ordinal)
         {
-            return reader.IsDBNull(ordinal) ? 0f : Convert.ToSingle(reader.GetValue(ordinal), CultureInfo.InvariantCulture);
+            return reader.IsDBNull(ordinal) ? (float?)null : Convert.ToSingle(reader.GetValue(ordinal), CultureInfo.InvariantCulture);
         }
 
         private static DateTimeOffset ReadDateTimeOffset(NpgsqlDataReader reader, int ordinal)
@@ -1778,19 +2023,45 @@ WHERE id = @id;";
                     using (var connection = new NpgsqlConnection(_mysqlConnectionString))
                     {
                         await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+
+                        // P1-2：电表离线不再只改 meter_status，而是同时产生一条 offline 告警事件。
+                        // 这是网页端"报警记录"此前只能靠当前状态临时拼凑、拿不到真实历史事件的根因：
+                        // 后端从来没有为电表离线写过 alarm_event（热泵那条链路一直是写的）。
                         const string sql = @"
-UPDATE meter_status
-SET is_online = FALSE,
-    status_code = 'offline',
-    updated_at = CURRENT_TIMESTAMP
-WHERE is_online = TRUE
-  AND last_collect_time IS NOT NULL
-  AND last_collect_time < @deadline;";
+WITH newly_offline AS (
+    UPDATE meter_status
+    SET is_online = FALSE,
+        status_code = 'offline',
+        updated_at = CURRENT_TIMESTAMP
+    WHERE is_online = TRUE
+      AND last_collect_time IS NOT NULL
+      AND last_collect_time < @deadline
+    RETURNING meter_id, last_collect_time
+)
+INSERT INTO alarm_event
+(meter_id, alarm_code, alarm_name, alarm_level, alarm_value, threshold_value, status, start_time)
+SELECT meter_id, 'offline', '设备离线', 'critical', NULL, @timeout_seconds, 'active', COALESCE(last_collect_time, now())
+FROM newly_offline
+ON CONFLICT (meter_id, alarm_code) WHERE status = 'active' DO UPDATE SET
+updated_at = CURRENT_TIMESTAMP
+RETURNING meter_id;";
 
                         using (var command = new NpgsqlCommand(sql, connection))
                         {
                             command.Parameters.AddWithValue("@deadline", GetBeijingNow().UtcDateTime - OfflineTimeout);
-                            await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+                            command.Parameters.AddWithValue("@timeout_seconds", Convert.ToDecimal(OfflineTimeout.TotalSeconds, CultureInfo.InvariantCulture));
+                            using (var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false))
+                            {
+                                while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+                                {
+                                    AppLogger.Warn(
+                                        "OfflineMonitor",
+                                        string.Format(
+                                            CultureInfo.InvariantCulture,
+                                            "表 {0} 超过 {1} 秒没有新采集时间，已标记离线并置位 offline 告警。",
+                                            reader.GetInt64(0), OfflineTimeout.TotalSeconds));
+                                }
+                            }
                         }
 
                         const string heatPumpSql = @"
@@ -1930,24 +2201,25 @@ WHERE id = @id;";
         {
             command.Parameters.AddWithValue("@meter_id", meterId);
             command.Parameters.AddWithValue("@collect_time", telemetry.CollectTime.ToUniversalTime());
-            command.Parameters.AddWithValue("@forward_active_energy", telemetry.Energy.ForwardActiveEnergy);
-            command.Parameters.AddWithValue("@reverse_active_energy", telemetry.Energy.ReverseActiveEnergy);
-            command.Parameters.AddWithValue("@forward_reactive_energy", telemetry.Energy.ForwardReactiveEnergy);
-            command.Parameters.AddWithValue("@reverse_reactive_energy", telemetry.Energy.ReverseReactiveEnergy);
+            // P1-5：可空之后必须显式转成 DBNull，否则 null 会被 Npgsql 当成未设置值。
+            command.Parameters.AddWithValue("@forward_active_energy", (object)telemetry.Energy.ForwardActiveEnergy ?? DBNull.Value);
+            command.Parameters.AddWithValue("@reverse_active_energy", (object)telemetry.Energy.ReverseActiveEnergy ?? DBNull.Value);
+            command.Parameters.AddWithValue("@forward_reactive_energy", (object)telemetry.Energy.ForwardReactiveEnergy ?? DBNull.Value);
+            command.Parameters.AddWithValue("@reverse_reactive_energy", (object)telemetry.Energy.ReverseReactiveEnergy ?? DBNull.Value);
         }
 
         private static void FillQualityParameters(NpgsqlCommand command, long meterId, MeterTelemetryMessage telemetry)
         {
             command.Parameters.AddWithValue("@meter_id", meterId);
             command.Parameters.AddWithValue("@collect_time", telemetry.CollectTime.ToUniversalTime());
-            command.Parameters.AddWithValue("@current_thd_a", telemetry.Quality.CurrentTHDA);
-            command.Parameters.AddWithValue("@current_thd_b", telemetry.Quality.CurrentTHDB);
-            command.Parameters.AddWithValue("@current_thd_c", telemetry.Quality.CurrentTHDC);
-            command.Parameters.AddWithValue("@voltage_thd_a", telemetry.Quality.VoltageTHDA);
-            command.Parameters.AddWithValue("@voltage_thd_b", telemetry.Quality.VoltageTHDB);
-            command.Parameters.AddWithValue("@voltage_thd_c", telemetry.Quality.VoltageTHDC);
-            command.Parameters.AddWithValue("@voltage_unbalance", telemetry.Quality.VoltageUnbalance);
-            command.Parameters.AddWithValue("@current_unbalance", telemetry.Quality.CurrentUnbalance);
+            command.Parameters.AddWithValue("@current_thd_a", (object)telemetry.Quality.CurrentTHDA ?? DBNull.Value);
+            command.Parameters.AddWithValue("@current_thd_b", (object)telemetry.Quality.CurrentTHDB ?? DBNull.Value);
+            command.Parameters.AddWithValue("@current_thd_c", (object)telemetry.Quality.CurrentTHDC ?? DBNull.Value);
+            command.Parameters.AddWithValue("@voltage_thd_a", (object)telemetry.Quality.VoltageTHDA ?? DBNull.Value);
+            command.Parameters.AddWithValue("@voltage_thd_b", (object)telemetry.Quality.VoltageTHDB ?? DBNull.Value);
+            command.Parameters.AddWithValue("@voltage_thd_c", (object)telemetry.Quality.VoltageTHDC ?? DBNull.Value);
+            command.Parameters.AddWithValue("@voltage_unbalance", (object)telemetry.Quality.VoltageUnbalance ?? DBNull.Value);
+            command.Parameters.AddWithValue("@current_unbalance", (object)telemetry.Quality.CurrentUnbalance ?? DBNull.Value);
         }
 
         private static void ApplyTopicMetadata(string topic, MeterTelemetryMessage telemetry)
@@ -2156,6 +2428,69 @@ WHERE id = @id;";
             catch
             {
                 return null;
+            }
+        }
+
+        /// <summary>
+        /// P1-4：电表消息库级去重。返回 true 表示这是第一次见到这条消息，应当继续处理。
+        ///
+        /// 兼容说明：老版本上位机发出的消息没有 MessageId（Guid.Empty），此时退回到
+        /// HandleEnvelope 里的内存指纹去重，直接返回 true 继续处理，不阻断升级过程中的混跑。
+        /// </summary>
+        private static bool TryMarkMeterMessageProcessed(
+            NpgsqlConnection connection,
+            NpgsqlTransaction transaction,
+            MqttEnvelope envelope,
+            MeterTelemetryMessage telemetry)
+        {
+            if (telemetry.MessageId == Guid.Empty)
+            {
+                return true;
+            }
+
+            const string sql = @"
+INSERT INTO meter_message_log (message_id, topic, meter_code, message_type, collect_time)
+VALUES (@message_id, @topic, @meter_code, @message_type, @collect_time)
+ON CONFLICT (message_id) DO NOTHING;";
+
+            using (var command = new NpgsqlCommand(sql, connection, transaction))
+            {
+                command.Parameters.AddWithValue("@message_id", telemetry.MessageId);
+                command.Parameters.AddWithValue("@topic", Truncate(envelope.Topic ?? string.Empty, 255));
+                command.Parameters.AddWithValue("@meter_code", (object)Truncate(telemetry.MeterCode, 64) ?? DBNull.Value);
+                command.Parameters.AddWithValue("@message_type", (object)Truncate(telemetry.MessageType, 64) ?? DBNull.Value);
+                command.Parameters.AddWithValue("@collect_time", telemetry.CollectTime.ToUniversalTime());
+                return command.ExecuteNonQuery() == 1;
+            }
+        }
+
+        /// <summary>
+        /// 清理过期的幂等记录（P1-4）。去重只需要覆盖"可能被重投"的时间窗，
+        /// 长期保留会让这张表变成第二个 mqtt_message_log。
+        /// </summary>
+        private static void PruneMeterMessageLog()
+        {
+            try
+            {
+                using (var connection = new NpgsqlConnection(_mysqlConnectionString))
+                {
+                    connection.Open();
+                    using (var command = new NpgsqlCommand(
+                        "DELETE FROM meter_message_log WHERE received_at < now() - make_interval(hours => @hours);",
+                        connection))
+                    {
+                        command.Parameters.AddWithValue("@hours", _messageLogRetentionHours);
+                        var deleted = command.ExecuteNonQuery();
+                        if (deleted > 0)
+                        {
+                            AppLogger.Info("Dedup", "清理过期幂等记录 " + deleted + " 条（保留 " + _messageLogRetentionHours + " 小时）。");
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Warn("Dedup", "清理 meter_message_log 失败。", ex);
             }
         }
 

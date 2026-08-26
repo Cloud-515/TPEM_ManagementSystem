@@ -20,6 +20,7 @@ import com.ruoyi.system.domain.MeterQualityRiskStats;
 import com.ruoyi.system.domain.MeterEnergyTrendPoint;
 import com.ruoyi.system.domain.MeterEnergyAnalysis;
 import com.ruoyi.system.domain.MeterEnergyRangeSummary;
+import com.ruoyi.system.domain.MeterThreshold;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import com.ruoyi.system.domain.MeterCard;
@@ -34,6 +35,12 @@ public class MeterCardServiceImpl implements IMeterCardService
     private static final long FUTURE_TIME_TOLERANCE_MILLIS = 60 * 1000L;
     private static final String RANGE_7D = "7d";
     private static final String RANGE_30D = "30d";
+
+    /** P1-1：判定阈值缓存有效期，与上位机 / 入库服务的 ThresholdRefreshSeconds 默认值一致。 */
+    private static final long THRESHOLD_CACHE_TTL_MILLIS = 5 * 60 * 1000L;
+
+    private volatile Map<String, Map<String, MeterThreshold>> thresholdCache = null;
+    private volatile long thresholdLoadedAt = 0L;
 
     @Autowired
     private MeterCardMapper meterCardMapper;
@@ -370,13 +377,113 @@ public class MeterCardServiceImpl implements IMeterCardService
     {
         List<String> risks = new ArrayList<>();
         if (!"OK".equals(card.getStatusCode())) risks.add("STATUS_ABNORMAL");
-        if (isBelow(card.getPowerFactorTotal(), 0.85f)) risks.add("POWER_FACTOR_LOW");
-        if (isOutside(card.getVoltageA(), 198f, 242f) || isOutside(card.getVoltageB(), 198f, 242f) || isOutside(card.getVoltageC(), 198f, 242f)) risks.add("VOLTAGE_OUT_OF_RANGE");
-        if (isAbove(card.getVoltageThdA(), 5f) || isAbove(card.getVoltageThdB(), 5f) || isAbove(card.getVoltageThdC(), 5f)) risks.add("VOLTAGE_THD_EXCEEDED");
-        if (isAbove(card.getCurrentThdA(), 8f) || isAbove(card.getCurrentThdB(), 8f) || isAbove(card.getCurrentThdC(), 8f)) risks.add("CURRENT_THD_EXCEEDED");
-        if (isAbove(card.getVoltageUnbalance(), 2f)) risks.add("VOLTAGE_UNBALANCE_EXCEEDED");
-        if (isAbove(card.getCurrentUnbalance(), 3f)) risks.add("CURRENT_UNBALANCE_EXCEEDED");
+
+        // P1-1：阈值改为从 meter_threshold 表读取（与上位机、入库服务同一份），
+        // 不再硬编码 0.85 / 198 / 242 / 5 / 8 / 2 / 3。
+        Map<String, MeterThreshold> t = resolveThresholds(card);
+
+        if (isBelow(card.getPowerFactorTotal(), minOf(t, "power_factor_total", 0.85f))) risks.add("POWER_FACTOR_LOW");
+
+        float voltageMin = minOf(t, "voltage_phase", 198f);
+        float voltageMax = maxOf(t, "voltage_phase", 242f);
+        if (isOutside(card.getVoltageA(), voltageMin, voltageMax)
+            || isOutside(card.getVoltageB(), voltageMin, voltageMax)
+            || isOutside(card.getVoltageC(), voltageMin, voltageMax)) risks.add("VOLTAGE_OUT_OF_RANGE");
+
+        float voltageThdMax = maxOf(t, "voltage_thd", 5f);
+        if (isAbove(card.getVoltageThdA(), voltageThdMax)
+            || isAbove(card.getVoltageThdB(), voltageThdMax)
+            || isAbove(card.getVoltageThdC(), voltageThdMax)) risks.add("VOLTAGE_THD_EXCEEDED");
+
+        float currentThdMax = maxOf(t, "current_thd", 8f);
+        if (isAbove(card.getCurrentThdA(), currentThdMax)
+            || isAbove(card.getCurrentThdB(), currentThdMax)
+            || isAbove(card.getCurrentThdC(), currentThdMax)) risks.add("CURRENT_THD_EXCEEDED");
+
+        if (isAbove(card.getVoltageUnbalance(), maxOf(t, "voltage_unbalance", 2f))) risks.add("VOLTAGE_UNBALANCE_EXCEEDED");
+        if (isAbove(card.getCurrentUnbalance(), maxOf(t, "current_unbalance", 3f))) risks.add("CURRENT_UNBALANCE_EXCEEDED");
         return risks.toArray(new String[0]);
+    }
+
+    /**
+     * 按 meter &gt; box &gt; site &gt; global 合并出该表最终生效的阈值（P1-1）。
+     * 读取失败时返回空表，由 minOf/maxOf 退回内置默认值 ——
+     * 页面不能因为查不到阈值就报错或不显示。
+     */
+    private Map<String, MeterThreshold> resolveThresholds(MeterCard card)
+    {
+        Map<String, Map<String, MeterThreshold>> all = loadThresholds();
+        Map<String, MeterThreshold> merged = new LinkedHashMap<>();
+        applyScope(merged, all.get("global|"));
+        applyScope(merged, all.get("site|" + safe(card.getSiteCode())));
+        applyScope(merged, all.get("box|" + safe(card.getBoxCode())));
+        applyScope(merged, all.get("meter|" + safe(card.getMeterCode())));
+        return merged;
+    }
+
+    private static void applyScope(Map<String, MeterThreshold> target, Map<String, MeterThreshold> source)
+    {
+        if (source != null)
+        {
+            target.putAll(source);
+        }
+    }
+
+    private static String safe(String value)
+    {
+        return value == null ? "" : value.trim();
+    }
+
+    /** 阈值缓存。阈值变更后最多 5 分钟生效，与上位机、入库服务的刷新节奏一致。 */
+    private Map<String, Map<String, MeterThreshold>> loadThresholds()
+    {
+        long now = System.currentTimeMillis();
+        Map<String, Map<String, MeterThreshold>> cached = thresholdCache;
+        if (cached != null && now - thresholdLoadedAt < THRESHOLD_CACHE_TTL_MILLIS)
+        {
+            return cached;
+        }
+
+        Map<String, Map<String, MeterThreshold>> loaded = new LinkedHashMap<>();
+        try
+        {
+            List<MeterThreshold> rows = meterCardMapper.selectMeterThresholds();
+            if (rows != null)
+            {
+                for (MeterThreshold row : rows)
+                {
+                    String key = safe(row.getScope()) + "|" + safe(row.getScopeKey());
+                    Map<String, MeterThreshold> bucket = loaded.get(key);
+                    if (bucket == null)
+                    {
+                        bucket = new LinkedHashMap<>();
+                        loaded.put(key, bucket);
+                    }
+                    bucket.put(safe(row.getMetricCode()), row);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            // 表还没建（未执行迁移 003）或临时不可用时，退回内置默认值继续工作。
+            loaded = new LinkedHashMap<>();
+        }
+
+        thresholdCache = loaded;
+        thresholdLoadedAt = now;
+        return loaded;
+    }
+
+    private static float minOf(Map<String, MeterThreshold> thresholds, String metricCode, float defaultValue)
+    {
+        MeterThreshold rule = thresholds.get(metricCode);
+        return rule == null ? defaultValue : rule.minOr(defaultValue);
+    }
+
+    private static float maxOf(Map<String, MeterThreshold> thresholds, String metricCode, float defaultValue)
+    {
+        MeterThreshold rule = thresholds.get(metricCode);
+        return rule == null ? defaultValue : rule.maxOr(defaultValue);
     }
 
     private boolean isBelow(Float value, float threshold)

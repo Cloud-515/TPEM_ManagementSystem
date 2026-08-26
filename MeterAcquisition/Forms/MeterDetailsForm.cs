@@ -171,10 +171,11 @@ namespace MeterAcquisition
             var status = GetDisplayStatus(meter);
             if (!status.IsOffline && meter.RealTime != null)
             {
-                float powerKw = meter.RealTime.ActivePowerTotal / 1000f;
-                float maxCurrent = MainForm.GetMaxCurrent(meter.RealTime);
-                _lblPower.Text = "功率: " + powerKw.ToString("F1") + " kW";
-                _lblCurrent.Text = "电流: " + maxCurrent.ToString("F1") + " A";
+                var powerKw = meter.RealTime.ActivePowerTotal.HasValue
+                    ? meter.RealTime.ActivePowerTotal.Value / 1000f
+                    : (float?)null;
+                _lblPower.Text = "功率: " + MainForm.FormatMeasure(powerKw, "F1") + " kW";
+                _lblCurrent.Text = "电流: " + MainForm.FormatMeasure(MainForm.GetMaxCurrent(meter.RealTime), "F1") + " A";
             }
             else
             {

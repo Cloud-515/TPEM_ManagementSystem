@@ -285,10 +285,11 @@ namespace MeterAcquisition
                 : _statusResolver(meter);
             if (!status.IsOffline && meter.RealTime != null)
             {
-                var powerKw = meter.RealTime.ActivePowerTotal / 1000f;
-                var maxCurrent = Math.Max(meter.RealTime.CurrentA, Math.Max(meter.RealTime.CurrentB, meter.RealTime.CurrentC));
-                card.PowerLabel.Text = powerKw.ToString("F1") + " kW";
-                card.CurrentLabel.Text = maxCurrent.ToString("F1") + " A";
+                var powerKw = meter.RealTime.ActivePowerTotal.HasValue
+                    ? meter.RealTime.ActivePowerTotal.Value / 1000f
+                    : (float?)null;
+                card.PowerLabel.Text = MainForm.FormatMeasure(powerKw, "F1") + " kW";
+                card.CurrentLabel.Text = MainForm.FormatMeasure(MainForm.GetMaxCurrent(meter.RealTime), "F1") + " A";
             }
             else
             {

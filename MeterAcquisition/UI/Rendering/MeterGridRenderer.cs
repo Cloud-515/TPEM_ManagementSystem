@@ -56,20 +56,20 @@ namespace MeterAcquisition
                 return;
             }
 
-            grid.Rows[0].Cells[1].Value = data.VoltageA.ToString("F2");
-            grid.Rows[1].Cells[1].Value = data.VoltageB.ToString("F2");
-            grid.Rows[2].Cells[1].Value = data.VoltageC.ToString("F2");
-            grid.Rows[3].Cells[1].Value = data.VoltageAB.ToString("F2");
-            grid.Rows[4].Cells[1].Value = data.VoltageBC.ToString("F2");
-            grid.Rows[5].Cells[1].Value = data.VoltageCA.ToString("F2");
-            grid.Rows[6].Cells[1].Value = data.CurrentA.ToString("F2");
-            grid.Rows[7].Cells[1].Value = data.CurrentB.ToString("F2");
-            grid.Rows[8].Cells[1].Value = data.CurrentC.ToString("F2");
-            grid.Rows[9].Cells[1].Value = data.ActivePowerTotal.ToString("F2");
-            grid.Rows[10].Cells[1].Value = data.ReactivePowerTotal.ToString("F2");
-            grid.Rows[11].Cells[1].Value = data.ApparentPowerTotal.ToString("F2");
-            grid.Rows[12].Cells[1].Value = data.PowerFactorTotal.ToString("F3");
-            grid.Rows[13].Cells[1].Value = data.Frequency.ToString("F2");
+            grid.Rows[0].Cells[1].Value = Fmt(data.VoltageA, "F2");
+            grid.Rows[1].Cells[1].Value = Fmt(data.VoltageB, "F2");
+            grid.Rows[2].Cells[1].Value = Fmt(data.VoltageC, "F2");
+            grid.Rows[3].Cells[1].Value = Fmt(data.VoltageAB, "F2");
+            grid.Rows[4].Cells[1].Value = Fmt(data.VoltageBC, "F2");
+            grid.Rows[5].Cells[1].Value = Fmt(data.VoltageCA, "F2");
+            grid.Rows[6].Cells[1].Value = Fmt(data.CurrentA, "F2");
+            grid.Rows[7].Cells[1].Value = Fmt(data.CurrentB, "F2");
+            grid.Rows[8].Cells[1].Value = Fmt(data.CurrentC, "F2");
+            grid.Rows[9].Cells[1].Value = Fmt(data.ActivePowerTotal, "F2");
+            grid.Rows[10].Cells[1].Value = Fmt(data.ReactivePowerTotal, "F2");
+            grid.Rows[11].Cells[1].Value = Fmt(data.ApparentPowerTotal, "F2");
+            grid.Rows[12].Cells[1].Value = Fmt(data.PowerFactorTotal, "F3");
+            grid.Rows[13].Cells[1].Value = Fmt(data.Frequency, "F2");
         }
 
         public static void UpdateEnergyGrid(DataGridView grid, EnergyData data)
@@ -83,10 +83,10 @@ namespace MeterAcquisition
                 return;
             }
 
-            grid.Rows[0].Cells[1].Value = data.ForwardActiveEnergy.ToString("F2");
-            grid.Rows[1].Cells[1].Value = data.ReverseActiveEnergy.ToString("F2");
-            grid.Rows[2].Cells[1].Value = data.ForwardReactiveEnergy.ToString("F2");
-            grid.Rows[3].Cells[1].Value = data.ReverseReactiveEnergy.ToString("F2");
+            grid.Rows[0].Cells[1].Value = Fmt(data.ForwardActiveEnergy, "F2");
+            grid.Rows[1].Cells[1].Value = Fmt(data.ReverseActiveEnergy, "F2");
+            grid.Rows[2].Cells[1].Value = Fmt(data.ForwardReactiveEnergy, "F2");
+            grid.Rows[3].Cells[1].Value = Fmt(data.ReverseReactiveEnergy, "F2");
         }
 
         public static void UpdateQualityGrid(DataGridView grid, PowerQualityData data)
@@ -100,14 +100,28 @@ namespace MeterAcquisition
                 return;
             }
 
-            grid.Rows[0].Cells[1].Value = data.CurrentTHDA.ToString("F2");
-            grid.Rows[1].Cells[1].Value = data.CurrentTHDB.ToString("F2");
-            grid.Rows[2].Cells[1].Value = data.CurrentTHDC.ToString("F2");
-            grid.Rows[3].Cells[1].Value = data.VoltageTHDA.ToString("F2");
-            grid.Rows[4].Cells[1].Value = data.VoltageTHDB.ToString("F2");
-            grid.Rows[5].Cells[1].Value = data.VoltageTHDC.ToString("F2");
-            grid.Rows[6].Cells[1].Value = data.VoltageUnbalance.ToString("F2");
-            grid.Rows[7].Cells[1].Value = data.CurrentUnbalance.ToString("F2");
+            grid.Rows[0].Cells[1].Value = Fmt(data.CurrentTHDA, "F2");
+            grid.Rows[1].Cells[1].Value = Fmt(data.CurrentTHDB, "F2");
+            grid.Rows[2].Cells[1].Value = Fmt(data.CurrentTHDC, "F2");
+            grid.Rows[3].Cells[1].Value = Fmt(data.VoltageTHDA, "F2");
+            grid.Rows[4].Cells[1].Value = Fmt(data.VoltageTHDB, "F2");
+            grid.Rows[5].Cells[1].Value = Fmt(data.VoltageTHDC, "F2");
+            grid.Rows[6].Cells[1].Value = Fmt(data.VoltageUnbalance, "F2");
+            grid.Rows[7].Cells[1].Value = Fmt(data.CurrentUnbalance, "F2");
+        }
+
+        /// <summary>
+        /// P1-5：字段改为可空后，缺数据统一显示 "--"，不再把"没采到"渲染成 0。
+        /// NaN / 无穷也按缺数据处理 —— 那是解析异常，不是测量值。
+        /// </summary>
+        private static string Fmt(float? value, string format)
+        {
+            if (!value.HasValue || float.IsNaN(value.Value) || float.IsInfinity(value.Value))
+            {
+                return "--";
+            }
+
+            return value.Value.ToString(format, System.Globalization.CultureInfo.InvariantCulture);
         }
 
         private static void ClearGridValues(DataGridView grid)
