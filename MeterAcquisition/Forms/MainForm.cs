@@ -108,7 +108,7 @@ namespace MeterAcquisition
         private Label _lblLineControllerControllerCountValue;
         private Label _lblLineControllerModuleCountValue;
         private Label _lblLineControllerRefreshValue;
-        private FlowLayoutPanel _flpLineControllerCards;
+        private TableLayoutPanel _flpLineControllerCards;
         private Label _lblLineControllerPageStatus;
 
         public MainForm()
@@ -231,8 +231,27 @@ namespace MeterAcquisition
             _meterOverview.MeterSelected += MeterOverview_MeterSelected;
             _tabMeterOverview.Controls.Add(_meterOverview);
 
+            // 这里只建页签，真正挂进 TabControl 推迟到 Load（见 InsertMeterOverviewTab）。
+        }
+
+        /// <summary>
+        /// 把"电表总览"插到"概览仪表盘"后面（UI-1）。
+        /// 必须等 TabControl 句柄创建后再插：句柄未创建时 <see cref="TabControl.TabPageCollection.Insert"/>
+        /// 会把页签**静默丢弃**（连 TabPages.Count 都不含它），
+        /// 原来写在构造函数里，导致这个页签和 MeterOverviewControl 从来没在界面上出现过。
+        /// 同位置的 TabPages.Add 不受影响，所以线控器/温控器三个页签一直是正常的。
+        /// </summary>
+        private void InsertMeterOverviewTab()
+        {
+            if (_tabMeterOverview == null || tabControlMain.TabPages.Contains(_tabMeterOverview))
+            {
+                return;
+            }
+
             var dashboardIndex = tabControlMain.TabPages.IndexOf(tabDashboard);
-            tabControlMain.TabPages.Insert(dashboardIndex >= 0 ? dashboardIndex + 1 : tabControlMain.TabPages.Count, _tabMeterOverview);
+            tabControlMain.TabPages.Insert(
+                dashboardIndex >= 0 ? dashboardIndex + 1 : tabControlMain.TabPages.Count,
+                _tabMeterOverview);
         }
 
         private void MeterOverview_MeterSelected(object sender, MeterSelectedEventArgs e)
@@ -487,42 +506,6 @@ namespace MeterAcquisition
                 Margin = new Padding(8, 8, 0, 0)
             });
             return panel;
-        }
-
-        private static Label AddSummaryCard(TableLayoutPanel summary, int columnIndex, string title, string initialValue)
-        {
-            var card = new Panel
-            {
-                Dock = DockStyle.Fill,
-                BackColor = Color.White,
-                BorderStyle = BorderStyle.FixedSingle,
-                Margin = new Padding(columnIndex == 0 ? 0 : 8, 0, 0, 0),
-                Padding = new Padding(12),
-                Height = 84
-            };
-
-            var titleLabel = new Label
-            {
-                Text = title,
-                Dock = DockStyle.Top,
-                AutoSize = false,
-                Height = 24,
-                ForeColor = Color.DimGray
-            };
-
-            var valueLabel = new Label
-            {
-                Text = initialValue,
-                Dock = DockStyle.Fill,
-                Font = new Font("微软雅黑", 16F, FontStyle.Bold, GraphicsUnit.Point, 134),
-                ForeColor = Color.FromArgb(32, 64, 96),
-                TextAlign = ContentAlignment.MiddleLeft
-            };
-
-            card.Controls.Add(valueLabel);
-            card.Controls.Add(titleLabel);
-            summary.Controls.Add(card, columnIndex, 0);
-            return valueLabel;
         }
 
         private void RefreshLineControllerPage()
@@ -953,51 +936,79 @@ namespace MeterAcquisition
 
         private void AddLineControllerGroup(LineControllerGroupViewModel group)
         {
-            var section = new Panel
+            // UI-5：原来是 Panel { Width = 1120 }，写死宽度 —— 窗口 1900 宽时右边空 700px、
+            // 卡片永远每行 3 张；窗口缩到 980 又会溢出横向滚动条。
+            // 改成单列表格：宽度由父容器那一列（100%）给，高度按内容自适应。
+            var section = new TableLayoutPanel
             {
-                Width = 1120,
+                Dock = DockStyle.Fill,
                 AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                ColumnCount = 1,
+                RowCount = 2,
                 Margin = new Padding(0, 0, 0, 16),
                 Padding = new Padding(0)
             };
+            section.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+            section.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            section.RowStyles.Add(new RowStyle(SizeType.AutoSize));
 
-            var titleBar = new Panel
+            // 分组标题行同样改成表格 3 列（标题占满 / 两个按钮各占一列）。
+            // 原来是 Panel + 两个 Dock=Right 按钮，靠 Panel 写死 Height=28 兜着；
+            // 高度一旦交给内容自适应，Dock=Right 的按钮就会被拉高（和 UI-3 同一个坑）。
+            var titleBar = new TableLayoutPanel
             {
-                Dock = DockStyle.Top,
-                Height = 28,
-                Margin = new Padding(0, 0, 0, 8)
+                Dock = DockStyle.Fill,
+                AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                ColumnCount = 3,
+                RowCount = 1,
+                Margin = new Padding(0, 0, 0, 8),
+                Padding = new Padding(0)
             };
+            titleBar.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+            titleBar.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            titleBar.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            titleBar.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             var titleLabel = new Label
             {
                 Text = string.IsNullOrWhiteSpace(group.ModuleGroupName) ? group.Title : group.Title + " / " + group.ModuleGroupName,
                 Dock = DockStyle.Fill,
+                AutoEllipsis = true,
+                TextAlign = ContentAlignment.MiddleLeft,
+                Margin = new Padding(0),
                 Font = new Font("微软雅黑", 10.5F, FontStyle.Bold, GraphicsUnit.Point, 134),
                 ForeColor = Color.FromArgb(48, 48, 48)
             };
             var editControllerButton = new Button
             {
                 Text = "配置控制器",
-                Dock = DockStyle.Right,
-                Width = 92,
+                AutoSize = true,
+                Anchor = AnchorStyles.Right,
+                Margin = new Padding(8, 0, 0, 0),
+                MinimumSize = new Size(92, 26),
                 Enabled = group.Controller != null
             };
             editControllerButton.Click += (sender, e) => EditHeatPumpController(group.Controller);
             var editGroupButton = new Button
             {
                 Text = "编辑分组",
-                Dock = DockStyle.Right,
-                Width = 82,
+                AutoSize = true,
+                Anchor = AnchorStyles.Right,
+                Margin = new Padding(8, 0, 0, 0),
+                MinimumSize = new Size(82, 26),
                 Enabled = group.Controller != null && group.Controller.Modules.Count > 0
             };
             editGroupButton.Click += (sender, e) => EditHeatPumpModuleGroups(group.Controller);
-            titleBar.Controls.Add(titleLabel);
-            titleBar.Controls.Add(editControllerButton);
-            titleBar.Controls.Add(editGroupButton);
+            titleBar.Controls.Add(titleLabel, 0, 0);
+            titleBar.Controls.Add(editGroupButton, 1, 0);
+            titleBar.Controls.Add(editControllerButton, 2, 0);
 
             var cardFlow = new FlowLayoutPanel
             {
-                Dock = DockStyle.Top,
+                Dock = DockStyle.Fill,
                 AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
                 WrapContents = true,
                 FlowDirection = FlowDirection.LeftToRight,
                 Margin = new Padding(0),
@@ -1009,8 +1020,8 @@ namespace MeterAcquisition
                 cardFlow.Controls.Add(CreateLineControllerCard(card));
             }
 
-            section.Controls.Add(cardFlow);
-            section.Controls.Add(titleBar);
+            section.Controls.Add(titleBar, 0, 0);
+            section.Controls.Add(cardFlow, 0, 1);
             _flpLineControllerCards.Controls.Add(section);
         }
 
@@ -1028,11 +1039,16 @@ namespace MeterAcquisition
                 Cursor = isSelectable ? Cursors.Hand : Cursors.Default
             };
 
+            // UI-3：这两个控件原来是 Dock = DockStyle.Right。
+            // Dock 到左右两侧的控件一定会被拉满可用高度 —— 实测在 340×208 的卡片里
+            // 复选框被拉成 100×154、按钮 75×154，遥测正文只剩 139px 宽，出水/回水温度那几行被挤没了。
+            // 改成放进标题行（表格 3 列：名称占满 / 复选框 / 按钮），各自只占一行高度。
             var selection = new CheckBox
             {
                 Text = "选择模块",
                 AutoSize = true,
-                Dock = DockStyle.Right,
+                Anchor = AnchorStyles.Right,
+                Margin = new Padding(8, 0, 0, 0),
                 Enabled = isSelectable && cardModel.Module.IsEnabled,
                 Checked = isSelectable && cardModel.Module.IsEnabled && _selectedHeatPumpModuleKeys.Contains(GetHeatPumpModuleKey(cardModel.Module)),
                 AccessibleName = "选择模块"
@@ -1042,7 +1058,9 @@ namespace MeterAcquisition
             {
                 Text = "配置",
                 AutoSize = true,
-                Dock = DockStyle.Right,
+                Anchor = AnchorStyles.Right,
+                Margin = new Padding(8, 0, 0, 0),
+                MinimumSize = new Size(56, 26),
                 Enabled = isSelectable
             };
             editModuleButton.Click += (sender, e) => EditHeatPumpModule(cardModel.Module);
@@ -1050,11 +1068,31 @@ namespace MeterAcquisition
             var moduleLabel = new Label
             {
                 Text = cardModel.ModuleName,
-                Dock = DockStyle.Top,
-                Height = 28,
+                Dock = DockStyle.Fill,
+                AutoEllipsis = true,
+                TextAlign = ContentAlignment.MiddleLeft,
+                Margin = new Padding(0),
                 Font = new Font("微软雅黑", 10.5F, FontStyle.Bold, GraphicsUnit.Point, 134),
                 ForeColor = Color.FromArgb(32, 64, 96)
             };
+
+            var headerRow = new TableLayoutPanel
+            {
+                Dock = DockStyle.Top,
+                AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                ColumnCount = 3,
+                RowCount = 1,
+                Margin = new Padding(0),
+                Padding = new Padding(0)
+            };
+            headerRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+            headerRow.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            headerRow.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            headerRow.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            headerRow.Controls.Add(moduleLabel, 0, 0);
+            headerRow.Controls.Add(selection, 1, 0);
+            headerRow.Controls.Add(editModuleButton, 2, 0);
 
             var subtitleLabel = new Label
             {
@@ -1090,6 +1128,7 @@ namespace MeterAcquisition
             {
                 EventHandler openDetails = (sender, e) => ShowHeatPumpModuleDetails(cardModel.Module);
                 card.Click += openDetails;
+                headerRow.Click += openDetails;
                 moduleLabel.Click += openDetails;
                 subtitleLabel.Click += openDetails;
                 lineContainer.Click += openDetails;
@@ -1099,11 +1138,10 @@ namespace MeterAcquisition
                 }
             }
 
+            // 停靠顺序是后加的先占位：标题行在最上，副标题紧随其后，遥测正文占满剩下的空间。
             card.Controls.Add(lineContainer);
             card.Controls.Add(subtitleLabel);
-            card.Controls.Add(selection);
-            card.Controls.Add(editModuleButton);
-            card.Controls.Add(moduleLabel);
+            card.Controls.Add(headerRow);
             return card;
         }
 
@@ -3330,6 +3368,7 @@ namespace MeterAcquisition
 
         private void MainForm_Load(object sender, EventArgs e)
         {
+            InsertMeterOverviewTab();
             InitializeGridRows();
             RefreshSerialPortCombos(false);
         }

@@ -13,7 +13,7 @@ namespace MeterAcquisition
 
         internal Panel ConnectionBarHost => _connectionBarHost;
         internal Panel GroupControlBarHost => _groupControlBarHost;
-        internal FlowLayoutPanel CardsPanel => _cardsPanel;
+        internal TableLayoutPanel CardsPanel => _cardsPanel;
         internal Label PageStatusLabel => _pageStatusLabel;
         internal Label ConnectionValueLabel => _connectionValueLabel;
         internal Label ControllerCountValueLabel => _controllerCountValueLabel;

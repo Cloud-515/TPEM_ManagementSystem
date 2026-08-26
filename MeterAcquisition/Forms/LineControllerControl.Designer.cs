@@ -9,7 +9,7 @@ namespace MeterAcquisition
         private Panel _connectionBarHost;
         private Panel _groupControlBarHost;
         private TableLayoutPanel _summaryLayout;
-        private FlowLayoutPanel _cardsPanel;
+        private TableLayoutPanel _cardsPanel;
         private Label _pageStatusLabel;
         private Label _connectionValueLabel;
         private Label _controllerCountValueLabel;
@@ -23,7 +23,7 @@ namespace MeterAcquisition
             _connectionBarHost = new Panel();
             _groupControlBarHost = new Panel();
             _summaryLayout = new TableLayoutPanel();
-            _cardsPanel = new FlowLayoutPanel();
+            _cardsPanel = new TableLayoutPanel();
             _pageStatusLabel = new Label();
             _connectionValueLabel = CreateSummaryValue("未连接");
             _controllerCountValueLabel = CreateSummaryValue("0");
@@ -51,10 +51,14 @@ namespace MeterAcquisition
             AddSummaryCard(_summaryLayout, 1, "控制器数量", _controllerCountValueLabel);
             AddSummaryCard(_summaryLayout, 2, "模块数量", _moduleCountValueLabel);
             AddSummaryCard(_summaryLayout, 3, "最近刷新", _refreshValueLabel);
+            // UI-5：分组容器改成单列 TableLayoutPanel。
+            // 原来是 FlowLayoutPanel(TopDown)，FlowLayout 不认 Dock，分组只能自己写死
+            // Width = 1120 才有宽度；换成单列表格后宽度由列（100%）给，窗口多宽就多宽。
             _cardsPanel.AutoScroll = true;
             _cardsPanel.Dock = DockStyle.Fill;
-            _cardsPanel.FlowDirection = FlowDirection.TopDown;
-            _cardsPanel.WrapContents = false;
+            _cardsPanel.ColumnCount = 1;
+            _cardsPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+            _cardsPanel.GrowStyle = TableLayoutPanelGrowStyle.AddRows;
             _pageStatusLabel.AutoSize = true;
             _pageStatusLabel.Dock = DockStyle.Fill;
             _pageStatusLabel.ForeColor = Color.DimGray;
@@ -71,16 +75,31 @@ namespace MeterAcquisition
             ResumeLayout(false);
         }
 
+        /// <summary>
+        /// 汇总卡片的数值标签：必须 Dock=Fill，不能 AutoSize。
+        /// 原来是 AutoSize=true 且不设 Dock，标签会停在 padding 区左上角，
+        /// 和下面那个 Dock=Top 的标题标签占同一块地方，两行字直接叠在一起（UI-2）。
+        /// </summary>
         private static Label CreateSummaryValue(string text)
         {
-            return new Label { AutoSize = true, Text = text, Font = new Font("Segoe UI", 12F, FontStyle.Bold), ForeColor = Color.FromArgb(30, 41, 59) };
+            return new Label
+            {
+                AutoSize = false,
+                Dock = DockStyle.Fill,
+                TextAlign = ContentAlignment.MiddleLeft,
+                Text = text,
+                Font = new Font("Segoe UI", 12F, FontStyle.Bold),
+                ForeColor = Color.FromArgb(30, 41, 59)
+            };
         }
 
         private static void AddSummaryCard(TableLayoutPanel summary, int column, string title, Label value)
         {
             var card = new Panel { Dock = DockStyle.Fill, BackColor = Color.White, BorderStyle = BorderStyle.FixedSingle, Margin = new Padding(column == 0 ? 0 : 8, 0, 0, 0), Padding = new Padding(12), MinimumSize = new Size(0, 84) };
+            // 先加 Dock=Fill 的数值，再加 Dock=Top 的标题：
+            // WinForms 的停靠顺序是后加的先占位，标题因此在上、数值占剩下的空间。
             card.Controls.Add(value);
-            card.Controls.Add(new Label { AutoSize = true, Dock = DockStyle.Top, Text = title, ForeColor = Color.DimGray });
+            card.Controls.Add(new Label { AutoSize = false, Dock = DockStyle.Top, Height = 24, Text = title, ForeColor = Color.DimGray });
             summary.Controls.Add(card, column, 0);
         }
     }

@@ -326,11 +326,20 @@ namespace MeterAcquisition
             _sectionsPanel.SuspendLayout();
             foreach (Control section in _sectionsPanel.Controls)
             {
+                if (!(section is TableLayoutPanel table))
+                {
+                    // "暂无电表设备"这类空态标签只同步宽度。
+                    // 它是 AutoSize=false 的 Label，一旦也套上 MinimumSize/MaximumSize = (宽, 0)，
+                    // FlowLayout 拿不到首选高度，高度会被约束成 0 —— 页签就是一片纯白（UI-1 顺带修）。
+                    section.Width = availableWidth;
+                    continue;
+                }
+
                 section.MinimumSize = new Size(availableWidth, 0);
                 section.MaximumSize = new Size(availableWidth, 0);
                 section.Width = availableWidth;
 
-                if (section is TableLayoutPanel table && table.Controls.Count > 1 && table.Controls[1] is FlowLayoutPanel cardsPanel)
+                if (table.Controls.Count > 1 && table.Controls[1] is FlowLayoutPanel cardsPanel)
                 {
                     cardsPanel.MinimumSize = new Size(availableWidth, 0);
                     cardsPanel.MaximumSize = new Size(availableWidth, 0);
