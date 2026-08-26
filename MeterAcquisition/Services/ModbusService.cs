@@ -15,6 +15,16 @@ namespace MeterAcquisition
         private readonly object _lockObj = new object();
         private bool _disposed = false;
 
+        // P2-3：通信质量统计。改造前所有失败都退化成 return null，
+        // "超时 / CRC 错 / 收到别人的回包 / 设备返回异常码"四种完全不同的问题无法区分，
+        // 也就无法回答"这条总线到底健不健康"。
+        private long _successCount;
+        private long _timeoutCount;
+        private long _crcErrorCount;
+        private long _mismatchCount;
+        private long _exceptionCount;
+        private long _errorCount;
+
         public event EventHandler<ConnectionStateChangedEventArgs> ConnectionStateChanged;
         public event EventHandler<Exception> CommunicationError;
 
@@ -119,14 +129,23 @@ namespace MeterAcquisition
         }
 
         /// <summary>
-        /// 读取保持寄存器
+        /// 读取保持寄存器（P2-3 已加帧校验）。
+        ///
+        /// 改造前只校验 CRC，不校验从站地址、功能码与字节数：
+        /// RS485 是共享总线，多方轮询时收到**别的从站**的回包是常态，
+        /// 那种回包 CRC 是合法的，于是会被当成本次请求的数据直接采信 ——
+        /// 表现为某台表偶尔出现另一台表的读数，且无从察觉。
+        /// 现在按顺序校验：长度 → 从站地址 → 功能码/异常码 → 字节数 → CRC，
+        /// 任一不符都判失败并记录具体原因，同时计入通信质量统计。
         /// </summary>
         public byte[] ReadHoldingRegisters(byte slaveAddress, ushort startAddress, ushort quantity)
         {
             lock (_lockObj)
             {
                 if (!IsConnected)
+                {
                     return null;
+                }
 
                 try
                 {
@@ -137,36 +156,116 @@ namespace MeterAcquisition
                     int expectedLength = 5 + quantity * 2;
                     byte[] response = ReadResponse(expectedLength);
 
-                    if (response != null && Crc16Helper.Validate(response, response.Length))
-                    {
-                        if (response[1] == 0x03)
-                        {
-                            byte[] data = new byte[response[2]];
-                            Array.Copy(response, 3, data, 0, data.Length);
-                            return data;
-                        }
-                        else if ((response[1] & 0x80) != 0)
-                        {
-                            throw new Exception($"Modbus 异常码: 0x{response[2]:X2}");
-                        }
-                    }
-
-                    return null;
+                    return ValidateReadResponse(response, slaveAddress, startAddress, quantity, expectedLength);
                 }
                 catch (TimeoutException)
                 {
+                    Interlocked.Increment(ref _timeoutCount);
                     return null;
                 }
                 catch (InvalidOperationException)
                 {
+                    // 串口已关闭/正在关闭，属于退出时的常见竞态。
                     return null;
                 }
                 catch (Exception ex)
                 {
+                    Interlocked.Increment(ref _errorCount);
+                    AppLogger.Error("Modbus", "读从站 " + slaveAddress + " 寄存器 0x" + startAddress.ToString("X4") + " 时异常。", ex);
                     OnCommunicationError(ex);
                     return null;
                 }
             }
+        }
+
+        /// <summary>
+        /// 逐项校验读响应，通过则返回纯数据区，否则返回 null 并记录原因。
+        /// </summary>
+        private byte[] ValidateReadResponse(byte[] response, byte slaveAddress, ushort startAddress, ushort quantity, int expectedLength)
+        {
+            var where = "从站 " + slaveAddress + " 寄存器 0x" + startAddress.ToString("X4");
+
+            if (response == null || response.Length < 3)
+            {
+                Interlocked.Increment(ref _timeoutCount);
+                AppLogger.Debug("Modbus", where + " 无响应或响应过短（" + (response == null ? 0 : response.Length) + " 字节）。");
+                return null;
+            }
+
+            // 1) 从站地址必须是我们问的那一台，否则是总线上别人的回包。
+            if (response[0] != slaveAddress)
+            {
+                Interlocked.Increment(ref _mismatchCount);
+                AppLogger.Warn(
+                    "Modbus",
+                    where + " 收到的响应来自从站 " + response[0] + "，与请求不符，已丢弃（总线串话或帧未对齐）。");
+                return null;
+            }
+
+            // 2) 异常响应：功能码最高位置位，第 3 字节是异常码。
+            if ((response[1] & 0x80) != 0)
+            {
+                Interlocked.Increment(ref _exceptionCount);
+                AppLogger.Warn(
+                    "Modbus",
+                    where + " 返回 Modbus 异常码 0x" + response[2].ToString("X2") + "（功能码 0x" + response[1].ToString("X2") + "）。");
+                return null;
+            }
+
+            // 3) 功能码必须是读保持寄存器。
+            if (response[1] != 0x03)
+            {
+                Interlocked.Increment(ref _mismatchCount);
+                AppLogger.Warn("Modbus", where + " 响应功能码为 0x" + response[1].ToString("X2") + "，期望 0x03，已丢弃。");
+                return null;
+            }
+
+            // 4) 字节数必须等于请求量 × 2，否则解析偏移一定错位。
+            int declaredBytes = response[2];
+            if (declaredBytes != quantity * 2)
+            {
+                Interlocked.Increment(ref _mismatchCount);
+                AppLogger.Warn(
+                    "Modbus",
+                    where + " 响应声明 " + declaredBytes + " 字节，期望 " + (quantity * 2) +
+                    " 字节，已丢弃（多半是设备型号或协议表与配置不符）。");
+                return null;
+            }
+
+            if (response.Length < expectedLength)
+            {
+                Interlocked.Increment(ref _timeoutCount);
+                AppLogger.Debug("Modbus", where + " 响应不完整：实收 " + response.Length + "，需要 " + expectedLength + "。");
+                return null;
+            }
+
+            // 5) CRC 只对"这一帧应有的长度"计算，多余字节不参与，
+            //    避免上一次超时残留的尾字节把本次好帧判成坏帧。
+            if (!Crc16Helper.Validate(response, expectedLength))
+            {
+                Interlocked.Increment(ref _crcErrorCount);
+                AppLogger.Warn("Modbus", where + " CRC 校验失败，已丢弃（线路干扰或帧未对齐）。");
+                return null;
+            }
+
+            var data = new byte[declaredBytes];
+            Array.Copy(response, 3, data, 0, declaredBytes);
+            Interlocked.Increment(ref _successCount);
+            return data;
+        }
+
+        /// <summary>通信质量统计（P2-3）。改造前失败原因全部退化成 null，无法区分也无法统计。</summary>
+        public string GetStatisticsSummary()
+        {
+            return string.Format(
+                System.Globalization.CultureInfo.InvariantCulture,
+                "成功 {0}，超时/不完整 {1}，CRC 错 {2}，身份/长度不符 {3}，设备异常码 {4}，其他异常 {5}",
+                Interlocked.Read(ref _successCount),
+                Interlocked.Read(ref _timeoutCount),
+                Interlocked.Read(ref _crcErrorCount),
+                Interlocked.Read(ref _mismatchCount),
+                Interlocked.Read(ref _exceptionCount),
+                Interlocked.Read(ref _errorCount));
         }
 
         public ushort[] ReadHoldingRegisterValues(byte slaveAddress, ushort startAddress, ushort quantity)

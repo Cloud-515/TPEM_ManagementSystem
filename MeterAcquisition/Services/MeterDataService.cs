@@ -1,9 +1,10 @@
-﻿
+
 
 using System;
 using System.IO.Ports;
 using System.Text;
 using Tpem.Diagnostics;
+using Tpem.Protocol;
 
 namespace MeterAcquisition
 {
@@ -12,15 +13,82 @@ namespace MeterAcquisition
     /// </summary>
     public class MeterDataService : IMeterDataReader
     {
-        // 各读取方法"实际消费到的最大字节数"。
-        // 原代码的长度守卫都小于这个值（112/16/40），响应偏短时会在解析途中越界，
-        // 且异常被 MeterManager.PollAll 的空 catch 吞掉（主串口路径则直接把程序带崩）。
-        // 对应改进项：P0-2。这些常量必须与下面的 offset 推进严格一致。
-        private const int RealTimeRequiredBytes = 116;   // 58 寄存器，最后读 Frequency @112..115
-        private const int EnergyRequiredBytes = 24;      // 12 寄存器，最后读反向无功 @20..23
-        private const int PowerQualityRequiredBytes = 116; // 58 寄存器，最后读电流不平衡 @112..115
+        private const ushort RealtimeStartAddress = 0x1581;
+        private const ushort EnergyStartAddress = 0x01F4;
+        private const ushort QualityStartAddress = 0x0514;
+
+        // 各读取方法"实际消费到的最大字节数"由映射表自动推导（P0-2 + P2-1）。
+        // 原代码把长度守卫写成 112/16/40，都小于实际消费量，响应偏短时会在解析途中越界；
+        // 现在守卫值来自 RegisterMapReader.RequiredLength(map)，不可能再与解析脱节。
         private const int DeviceInfoRequiredBytes = 60;  // 30 寄存器，最后读 IoConfig @58..59
         private const int CommConfigRequiredBytes = 6;   // 3 寄存器
+
+        /// <summary>
+        /// 原有电表实时数据映射（P2-1）。
+        /// 偏移直接写出，取代原来一长串 `offset += 4` / `// 跳过...` 的累加 ——
+        /// 那种写法下"某个字段到底落在第几字节"必须靠人从头数一遍。
+        /// 该表 3 个平均值字段与各相分量按协议是跳过的，未列入。
+        /// </summary>
+        private static readonly RegisterField<RealTimeData>[] RealtimeMap =
+        {
+            new RegisterField<RealTimeData>("VoltageA", 0, RegisterValueType.Float32, 1f, "V", (d, v) => d.VoltageA = v),
+            new RegisterField<RealTimeData>("VoltageB", 4, RegisterValueType.Float32, 1f, "V", (d, v) => d.VoltageB = v),
+            new RegisterField<RealTimeData>("VoltageC", 8, RegisterValueType.Float32, 1f, "V", (d, v) => d.VoltageC = v),
+            // 12: 平均相电压（跳过）
+            new RegisterField<RealTimeData>("VoltageAB", 16, RegisterValueType.Float32, 1f, "V", (d, v) => d.VoltageAB = v),
+            new RegisterField<RealTimeData>("VoltageBC", 20, RegisterValueType.Float32, 1f, "V", (d, v) => d.VoltageBC = v),
+            new RegisterField<RealTimeData>("VoltageCA", 24, RegisterValueType.Float32, 1f, "V", (d, v) => d.VoltageCA = v),
+            // 28: 平均线电压（跳过）
+            new RegisterField<RealTimeData>("CurrentA", 32, RegisterValueType.Float32, 1f, "A", (d, v) => d.CurrentA = v),
+            new RegisterField<RealTimeData>("CurrentB", 36, RegisterValueType.Float32, 1f, "A", (d, v) => d.CurrentB = v),
+            new RegisterField<RealTimeData>("CurrentC", 40, RegisterValueType.Float32, 1f, "A", (d, v) => d.CurrentC = v),
+            // 44: 平均电流（跳过）；48~59: 各相有功功率（跳过）
+            new RegisterField<RealTimeData>("ActivePowerTotal", 60, RegisterValueType.Float32, 1f, "W", (d, v) => d.ActivePowerTotal = v),
+            // 64~75: 各相无功功率（跳过）
+            new RegisterField<RealTimeData>("ReactivePowerTotal", 76, RegisterValueType.Float32, 1f, "var", (d, v) => d.ReactivePowerTotal = v),
+            // 80~91: 各相视在功率（跳过）
+            new RegisterField<RealTimeData>("ApparentPowerTotal", 92, RegisterValueType.Float32, 1f, "VA", (d, v) => d.ApparentPowerTotal = v),
+            // 96~107: 各相功率因数（跳过）
+            new RegisterField<RealTimeData>("PowerFactorTotal", 108, RegisterValueType.Float32, 1f, string.Empty, (d, v) => d.PowerFactorTotal = v),
+            new RegisterField<RealTimeData>("Frequency", 112, RegisterValueType.Float32, 1f, "Hz", (d, v) => d.Frequency = v)
+        };
+
+        /// <summary>原有电表电能映射。原始为 32 位整数，0.01 一档，故 Scale=0.01。</summary>
+        private static readonly RegisterField<EnergyData>[] EnergyMap =
+        {
+            new RegisterField<EnergyData>("ForwardActiveEnergy", 0, RegisterValueType.Int32, 0.01f, "kWh", (d, v) => d.ForwardActiveEnergy = v),
+            new RegisterField<EnergyData>("ReverseActiveEnergy", 4, RegisterValueType.Int32, 0.01f, "kWh", (d, v) => d.ReverseActiveEnergy = v),
+            // 8~15: 预留（跳过）
+            new RegisterField<EnergyData>("ForwardReactiveEnergy", 16, RegisterValueType.Int32, 0.01f, "kvarh", (d, v) => d.ForwardReactiveEnergy = v),
+            new RegisterField<EnergyData>("ReverseReactiveEnergy", 20, RegisterValueType.Int32, 0.01f, "kvarh", (d, v) => d.ReverseReactiveEnergy = v)
+        };
+
+        /// <summary>
+        /// 原有电表电能质量映射。原始为比率浮点，×100 换成百分比。
+        ///
+        /// TODO(P2-1)：VoltageUnbalance / CurrentUnbalance 的偏移 108 / 112 沿用改造前的推导结果
+        /// （原代码在读完 VoltageTHDC 后缺少一次 `offset += 4`，随后 `offset += 40`，等效于只跳过 36 字节预留区）。
+        /// 现在偏移是显式的，这个可疑点从"藏在算术里"变成"写在表上"，但仍需对照协议地址表核对；
+        /// 未经核对不改动，以免静默改变已入库数据的语义。
+        /// </summary>
+        private static readonly RegisterField<PowerQualityData>[] QualityMap =
+        {
+            // 0~11: 畸变值（跳过）
+            new RegisterField<PowerQualityData>("CurrentTHDA", 12, RegisterValueType.Float32, 100f, "%", (d, v) => d.CurrentTHDA = v),
+            new RegisterField<PowerQualityData>("CurrentTHDB", 16, RegisterValueType.Float32, 100f, "%", (d, v) => d.CurrentTHDB = v),
+            new RegisterField<PowerQualityData>("CurrentTHDC", 20, RegisterValueType.Float32, 100f, "%", (d, v) => d.CurrentTHDC = v),
+            // 24~47: 预留（跳过）；48~59: 畸变值（跳过）
+            new RegisterField<PowerQualityData>("VoltageTHDA", 60, RegisterValueType.Float32, 100f, "%", (d, v) => d.VoltageTHDA = v),
+            new RegisterField<PowerQualityData>("VoltageTHDB", 64, RegisterValueType.Float32, 100f, "%", (d, v) => d.VoltageTHDB = v),
+            new RegisterField<PowerQualityData>("VoltageTHDC", 68, RegisterValueType.Float32, 100f, "%", (d, v) => d.VoltageTHDC = v),
+            // 72~107: 预留（跳过，见上方 TODO）
+            new RegisterField<PowerQualityData>("VoltageUnbalance", 108, RegisterValueType.Float32, 100f, "%", (d, v) => d.VoltageUnbalance = v),
+            new RegisterField<PowerQualityData>("CurrentUnbalance", 112, RegisterValueType.Float32, 100f, "%", (d, v) => d.CurrentUnbalance = v)
+        };
+
+        internal static RegisterField<RealTimeData>[] RealtimeFields => RealtimeMap;
+        internal static RegisterField<EnergyData>[] EnergyFields => EnergyMap;
+        internal static RegisterField<PowerQualityData>[] QualityFields => QualityMap;
 
         private readonly ModbusService _modbusService;
 
@@ -44,56 +112,14 @@ namespace MeterAcquisition
 
         public RealTimeData ReadRealTimeData(byte slaveAddress)
         {
-            byte[] response = _modbusService.ReadHoldingRegisters(slaveAddress, 0x1581, 58);
-            //byte[] response = _modbusService.ReadHoldingRegisters(SlaveAddress, 0x15B9, 2);
-            if (!IsResponseUsable(response, RealTimeRequiredBytes, slaveAddress, "实时数据", 0x1581))
+            byte[] response = _modbusService.ReadHoldingRegisters(slaveAddress, RealtimeStartAddress, 58);
+            if (!IsResponseUsable(response, RegisterMapReader.RequiredLength(RealtimeMap), slaveAddress, "实时数据", RealtimeStartAddress))
             {
                 return null;
             }
-            RealTimeData data = new RealTimeData();
-            int offset = 0;
-            data.VoltageA = BitConverter.ToSingle(GetReversedBytes(response, offset), 0);
-            offset += 4;
-            data.VoltageB = BitConverter.ToSingle(GetReversedBytes(response, offset), 0);
-            offset += 4;
-            data.VoltageC = BitConverter.ToSingle(GetReversedBytes(response, offset), 0);
-            offset += 4;
-            // 跳过平均相电压
-            offset += 4;
-            data.VoltageAB = BitConverter.ToSingle(GetReversedBytes(response, offset), 0);
-            offset += 4;
-            data.VoltageBC = BitConverter.ToSingle(GetReversedBytes(response, offset), 0);
-            offset += 4;
-            data.VoltageCA = BitConverter.ToSingle(GetReversedBytes(response, offset), 0);
-            offset += 4;
-            // 跳过平均线电压
-            offset += 4;
-            data.CurrentA = BitConverter.ToSingle(GetReversedBytes(response, offset), 0);
-            offset += 4;
-            data.CurrentB = BitConverter.ToSingle(GetReversedBytes(response, offset), 0);
-            offset += 4;
-            data.CurrentC = BitConverter.ToSingle(GetReversedBytes(response, offset), 0);
-            offset += 4;
-            // 跳过平均电流
-            offset += 4;
-            // 跳过各相有功功率
-            //offset += 16;
-            offset += 12;
-            data.ActivePowerTotal = BitConverter.ToSingle(GetReversedBytes(response, offset), 0);
-            offset += 4;
-            // 跳过各相无功功率
-            offset += 12;
-            data.ReactivePowerTotal = BitConverter.ToSingle(GetReversedBytes(response, offset), 0);
-            offset += 4;
-            // 跳过各相视在功率
-            offset += 12;
-            data.ApparentPowerTotal = BitConverter.ToSingle(GetReversedBytes(response, offset), 0);
-            offset += 4;
-            // 跳过各相功率因数
-            offset += 12;
-            data.PowerFactorTotal = BitConverter.ToSingle(GetReversedBytes(response, offset), 0);
-            offset += 4;
-            data.Frequency = BitConverter.ToSingle(GetReversedBytes(response, offset), 0);
+
+            var data = new RealTimeData();
+            RegisterMapReader.Apply(RealtimeMap, response, data);
             return data;
         }
 
@@ -104,24 +130,14 @@ namespace MeterAcquisition
 
         public EnergyData ReadEnergyData(byte slaveAddress)
         {
-            byte[] response = _modbusService.ReadHoldingRegisters(slaveAddress, 0x01F4, 12);
-            if (!IsResponseUsable(response, EnergyRequiredBytes, slaveAddress, "电能数据", 0x01F4))
+            byte[] response = _modbusService.ReadHoldingRegisters(slaveAddress, EnergyStartAddress, 12);
+            if (!IsResponseUsable(response, RegisterMapReader.RequiredLength(EnergyMap), slaveAddress, "电能数据", EnergyStartAddress))
             {
                 return null;
             }
-            EnergyData data = new EnergyData();
-            int offset = 0;
-            data.ForwardActiveEnergy = BitConverter.ToInt32(GetReversedBytes(response, offset), 0) / 100.0f;
-            offset += 4;
-            data.ReverseActiveEnergy = BitConverter.ToInt32(GetReversedBytes(response, offset), 0) / 100.0f;
-            offset += 4;
-            offset += 4;
-            // 跳过预留
-            offset += 4;
-            data.ForwardReactiveEnergy = BitConverter.ToInt32(GetReversedBytes(response, offset), 0) / 100.0f;
-            offset += 4;
-            // todo
-            data.ReverseReactiveEnergy = BitConverter.ToInt32(GetReversedBytes(response, offset), 0) / 100.0f;
+
+            var data = new EnergyData();
+            RegisterMapReader.Apply(EnergyMap, response, data);
             return data;
         }
 
@@ -132,36 +148,14 @@ namespace MeterAcquisition
 
         public PowerQualityData ReadPowerQualityData(byte slaveAddress)
         {
-            byte[] response = _modbusService.ReadHoldingRegisters(slaveAddress, 0x0514, 58);
-            if (!IsResponseUsable(response, PowerQualityRequiredBytes, slaveAddress, "电能质量", 0x0514))
+            byte[] response = _modbusService.ReadHoldingRegisters(slaveAddress, QualityStartAddress, 58);
+            if (!IsResponseUsable(response, RegisterMapReader.RequiredLength(QualityMap), slaveAddress, "电能质量", QualityStartAddress))
             {
                 return null;
             }
-            PowerQualityData data = new PowerQualityData();
-            // 跳过畸变值
-            int offset = 12;
-            data.CurrentTHDA = BitConverter.ToSingle(GetReversedBytes(response, offset), 0) * 100;
-            offset += 4;
-            data.CurrentTHDB = BitConverter.ToSingle(GetReversedBytes(response, offset), 0) * 100;
-            offset += 4;
-            data.CurrentTHDC = BitConverter.ToSingle(GetReversedBytes(response, offset), 0) * 100;
-            offset += 4;
-            // 跳过预留
-            offset += 24;
-            // 跳过畸变值
-            offset += 12;
-            data.VoltageTHDA = BitConverter.ToSingle(GetReversedBytes(response, offset), 0) * 100;
-            offset += 4;
-            data.VoltageTHDB = BitConverter.ToSingle(GetReversedBytes(response, offset), 0) * 100;
-            offset += 4;
-            data.VoltageTHDC = BitConverter.ToSingle(GetReversedBytes(response, offset), 0) * 100;
-            // TODO(P2-1): 此处缺少与其他字段一致的 offset += 4，下面的 "+= 40" 是从 VoltageTHDC
-            // 自身偏移起算的，等效于只跳过 36 字节预留区。需对照协议地址表核对；
-            // 未经核对不擅自改动，以免静默改变已入库数据的语义。
-            offset += 40;
-            data.VoltageUnbalance = BitConverter.ToSingle(GetReversedBytes(response, offset), 0) * 100;
-            offset += 4;
-            data.CurrentUnbalance = BitConverter.ToSingle(GetReversedBytes(response, offset), 0) * 100;
+
+            var data = new PowerQualityData();
+            RegisterMapReader.Apply(QualityMap, response, data);
             return data;
         }
         #endregion
@@ -343,7 +337,7 @@ namespace MeterAcquisition
         /// 统一的响应可用性检查（P0-2）。
         /// 长度不足时记 Warn 而不是静默返回 null —— 原来这类失败在日志里完全看不见。
         /// </summary>
-        private static bool IsResponseUsable(byte[] response, int requiredBytes, byte slaveAddress, string what, ushort startAddress)
+        internal static bool IsResponseUsable(byte[] response, int requiredBytes, byte slaveAddress, string what, ushort startAddress)
         {
             if (response == null)
             {

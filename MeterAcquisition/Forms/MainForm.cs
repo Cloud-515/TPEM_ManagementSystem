@@ -17,6 +17,7 @@ using MeterAcquisition.Properties;
 using Tpem.Diagnostics;
 using Tpem.Thresholds;
 using ThreadingCancellationToken = System.Threading.CancellationToken;
+using ThreadingCancellationTokenSource = System.Threading.CancellationTokenSource;
 
 namespace MeterAcquisition
 {
@@ -2585,7 +2586,7 @@ namespace MeterAcquisition
             lblStatus.Click += MeterCard_Click;
             line.Click += MeterCard_Click;
 
-            card.Tag = new { PowerLabel = lblPower, CurrentLabel = lblCurrent, StatusLabel = lblStatus };
+            card.Tag = new MeterCardTags(lblPower, lblCurrent, lblStatus);
             return card;
         }
 
@@ -2703,7 +2704,8 @@ namespace MeterAcquisition
                 var meter = allMeters.Find(m => m.Id == card.Name);
                 if (meter == null) continue;
 
-                dynamic tags = card.Tag;
+                var tags = card.Tag as MeterCardTags;
+                if (tags == null) continue;
                 UpdateMeterCardLabels(tags, meter);
             }
         }
@@ -2720,7 +2722,13 @@ namespace MeterAcquisition
             }
         }
 
-        private void UpdateMeterCardLabels(dynamic tags, MeterInfo meter)
+        /// <summary>
+        /// P2-6：参数由 `dynamic` 改为强类型 MeterCardTags。
+        /// 原来用匿名类型放进 Control.Tag 再用 dynamic 取回：没有编译期检查、
+        /// 每次访问都走 DLR、卡片结构一改就是运行时 RuntimeBinderException，
+        /// 而这个方法每秒对每张卡片都会执行一次。
+        /// </summary>
+        private void UpdateMeterCardLabels(MeterCardTags tags, MeterInfo meter)
         {
             var (statusText, statusColor, isOffline) = GetMeterDisplayStatus(meter);
             if (!isOffline && meter.RealTime != null)
@@ -2970,10 +2978,20 @@ namespace MeterAcquisition
                 : new MeterDataService(service);
         }
 
-        private static byte? DiscoverMeterAddress(ModbusService service, IMeterDataReader reader)
+        /// <summary>
+        /// 从 1 扫到 247 找出设备地址。P2-4：现在只在后台线程调用，支持进度回报与取消。
+        /// </summary>
+        private static byte? DiscoverMeterAddress(
+            ModbusService service,
+            IMeterDataReader reader,
+            IProgress<byte> progress,
+            ThreadingCancellationToken cancellationToken)
         {
             for (byte address = 1; address <= 247; address++)
             {
+                cancellationToken.ThrowIfCancellationRequested();
+                progress?.Report(address);
+
                 if (reader.Probe(address))
                 {
                     service.Config.SlaveAddress = address;
@@ -2984,6 +3002,15 @@ namespace MeterAcquisition
             return null;
         }
 
+        /// <summary>
+        /// 切换电表型号（P2-7）。
+        ///
+        /// 改造前的缺陷：这里 `new MeterManager(...)` 直接把管理器换掉，但不重建仪表盘面板。
+        /// 于是界面上仍留着旧型号的卡片，而这些卡片对应的 MeterInfo 已经不在新管理器里，
+        /// UpdateAllCardLabels 里 `Find` 返回 null 后静默 continue —— 卡片停在旧读数上，
+        /// 既不刷新也不报错，看起来像"采集卡住了"。
+        /// 现在换管理器后同步重建默认配电箱与面板，并明确告知用户设备列表已清空。
+        /// </summary>
         private void btnMeterProtocol_Click(object sender, EventArgs e)
         {
             if (_modbusService.IsConnected || _modbusService2.IsConnected)
@@ -2992,7 +3019,19 @@ namespace MeterAcquisition
                 return;
             }
 
-            _meterProtocol = _meterProtocol == "Amc96lE4" ? "Legacy" : "Amc96lE4";
+            var target = _meterProtocol == "Amc96lE4" ? "Legacy" : "Amc96lE4";
+            var hadMeters = _meterManager != null && _meterManager.AllMeters.Count > 0;
+            if (hadMeters &&
+                MessageBox.Show(
+                    "切换电表型号会清空当前已扫描到的设备列表（两种型号的寄存器映射不同，不能混用）。\n\n确定切换吗？",
+                    "确认切换电表型号",
+                    MessageBoxButtons.YesNo,
+                    MessageBoxIcon.Warning) != DialogResult.Yes)
+            {
+                return;
+            }
+
+            _meterProtocol = target;
             _meterCommunicationConfig = GetMeterCommunicationConfig(_meterProtocol);
             ApplyMeterCommunicationConfig(_modbusService, _meterCommunicationConfig);
             ApplyMeterCommunicationConfig(_modbusService2, _meterCommunicationConfig);
@@ -3000,9 +3039,40 @@ namespace MeterAcquisition
             _meterDataService = CreateMeterDataReader(_modbusService);
             _meterDataService2 = CreateMeterDataReader(_modbusService2);
             _meterManager = new MeterManager(_meterDataService, _meterDataService2);
+
+            // 关键：管理器换了，界面必须跟着重建，否则留下指向旧对象的僵尸卡片。
+            SetupDefaultBoxes();
+            RebuildDashboardPanels();
+            ResizeDashboardPanels();
+            UpdateAllCardLabels();
+            _meterOverview?.RefreshMeterValues(_meterManager.AllMeters);
+            CloseAllDetailForms();
+
             UpdateMeterProtocolButton();
+            AppLogger.Info("Config", "电表型号已切换为 " + _meterDataService.DeviceModel + "，设备列表与面板已重建。");
             lblStatus.Text = "已切换为" + _meterDataService.DeviceModel + "，请连接串口后扫描设备";
             lblStatus.ForeColor = Color.Green;
+        }
+
+        /// <summary>切换型号后关闭所有详情窗口：它们持有的是旧管理器里的电表引用。</summary>
+        private void CloseAllDetailForms()
+        {
+            foreach (var form in _detailForms.Values.ToList())
+            {
+                try
+                {
+                    if (!form.IsDisposed)
+                    {
+                        form.Close();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    AppLogger.Debug("Config", "关闭详情窗口时异常: " + ex.Message);
+                }
+            }
+
+            _detailForms.Clear();
         }
 
         private void UpdateMeterProtocolButton()
@@ -3473,39 +3543,114 @@ namespace MeterAcquisition
 
         private void BtnDisconnect_Click(object sender, EventArgs e) { _modbusService.Disconnect(); }
 
-        private void BtnDiscover_Click(object sender, EventArgs e)
+        /// <summary>
+        /// 探测从站地址（P2-4）。
+        ///
+        /// 改造前的缺陷：DiscoverMeterAddress 在 UI 线程上从 1 扫到 247，单次探测最长 500ms，
+        /// 最坏情况界面完全无响应约 2 分钟（Windows 会标成"程序未响应"）。
+        /// 而且它无条件在结尾 Disconnect() 并把状态置成"未连接"——
+        /// 采集正在运行时点一下探测就把整条采集打断了。
+        /// 现在：扫描搬到后台线程、可取消、有进度；已在采集中则拒绝执行；
+        /// 只有本次是为探测而临时打开的串口才会在结束后关闭。
+        /// </summary>
+        private async void BtnDiscover_Click(object sender, EventArgs e)
         {
             if (cmbPort.SelectedItem == null)
             {
                 MessageBox.Show("请先选择串口", "提示", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
-            lblStatus.Text = "正在探测设备地址...";
-            lblStatus.ForeColor = Color.Blue;
-            var config = new CommunicationConfig
+
+            if (_refreshTimer.Enabled || _isRefreshing)
             {
-                BaudRate = int.Parse(cmbBaud.SelectedItem.ToString()),
-                Parity = _meterCommunicationConfig.Parity,
-                DataBits = _meterCommunicationConfig.DataBits,
-                StopBits = _meterCommunicationConfig.StopBits
-            };
-            _modbusService.UpdateConfig(config);
-            if (!_modbusService.IsConnected)
-                _modbusService.Connect(cmbPort.SelectedItem.ToString());
-            if (_modbusService.IsConnected)
-            {
-                byte? address = DiscoverMeterAddress(_modbusService, _meterDataService);
-                if (address.HasValue)
-                {
-                    txtAddr.Text = address.Value.ToString();
-                    MessageBox.Show("探测成功！设备地址为: " + address.Value, "成功", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                }
-                else
-                    MessageBox.Show("未找到设备，请检查接线和通讯参数", "失败", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                _modbusService.Disconnect();
+                MessageBox.Show(
+                    "当前正在采集，探测地址会长时间占用串口。\n\n请先断开连接后再探测。",
+                    "提示",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Warning);
+                return;
             }
-            lblStatus.Text = "未连接";
-            lblStatus.ForeColor = Color.Red;
+
+            int baudRate;
+            if (!int.TryParse(cmbBaud.SelectedItem?.ToString(), out baudRate))
+            {
+                MessageBox.Show("请选择有效的波特率", "提示", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            var openedForDiscovery = false;
+            btnDiscover.Enabled = false;
+            using (var cts = new ThreadingCancellationTokenSource())
+            {
+                try
+                {
+                    var config = new CommunicationConfig
+                    {
+                        BaudRate = baudRate,
+                        Parity = _meterCommunicationConfig.Parity,
+                        DataBits = _meterCommunicationConfig.DataBits,
+                        StopBits = _meterCommunicationConfig.StopBits
+                    };
+                    _modbusService.UpdateConfig(config);
+
+                    if (!_modbusService.IsConnected)
+                    {
+                        if (!_modbusService.Connect(cmbPort.SelectedItem.ToString()))
+                        {
+                            lblStatus.Text = "探测失败：串口打开失败";
+                            lblStatus.ForeColor = Color.OrangeRed;
+                            return;
+                        }
+
+                        openedForDiscovery = true;
+                    }
+
+                    AppLogger.Info("Discover", "开始探测从站地址 1~247，波特率 " + baudRate + "。");
+                    var progress = new Progress<byte>(current =>
+                    {
+                        lblStatus.Text = "正在探测设备地址... " + current + "/247";
+                        lblStatus.ForeColor = Color.Blue;
+                    });
+
+                    var reader = _meterDataService;
+                    var service = _modbusService;
+                    var address = await Task.Run(
+                        () => DiscoverMeterAddress(service, reader, progress, cts.Token),
+                        cts.Token).ConfigureAwait(true);
+
+                    if (address.HasValue)
+                    {
+                        txtAddr.Text = address.Value.ToString(CultureInfo.InvariantCulture);
+                        AppLogger.Info("Discover", "探测成功，从站地址为 " + address.Value + "。");
+                        MessageBox.Show("探测成功！设备地址为: " + address.Value, "成功", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    }
+                    else
+                    {
+                        AppLogger.Warn("Discover", "1~247 全范围探测未发现设备。" + _modbusService.GetStatisticsSummary());
+                        MessageBox.Show(
+                            "未找到设备，请检查接线和通讯参数。\n\n本次通信统计：\n" + _modbusService.GetStatisticsSummary(),
+                            "失败",
+                            MessageBoxButtons.OK,
+                            MessageBoxIcon.Warning);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    HandleHandlerException("探测设备地址", ex);
+                }
+                finally
+                {
+                    btnDiscover.Enabled = true;
+
+                    // 只关闭"为了探测才打开"的串口，不动用户原本已建立的连接。
+                    if (openedForDiscovery)
+                    {
+                        _modbusService.Disconnect();
+                        lblStatus.Text = "未连接";
+                        lblStatus.ForeColor = Color.Red;
+                    }
+                }
+            }
         }
 
         private void BtnReadParams_Click(object sender, EventArgs e)

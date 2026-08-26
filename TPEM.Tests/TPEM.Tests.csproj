@@ -1,0 +1,66 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net48</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <IsPackable>false</IsPackable>
+    <AssemblyName>TPEM.Tests</AssemblyName>
+    <RootNamespace>Tpem.Tests</RootNamespace>
+    <!-- 解决方案里其余两个项目是 packages.config 老式工程，这里用 SDK 式独立还原，互不影响 -->
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="**\*.cs" Exclude="bin\**;obj\**" />
+    <!--
+      直接引用被测源码，而不是引用 MeterAcquisition 工程：
+      后者是 WinForms exe + packages.config，从 SDK 式工程引它会连带拖进 ScottPlot/SkiaSharp
+      等一堆与测试无关的依赖，且 packages.config 的传递依赖不会被 SDK 式还原正确处理。
+      被测代码都是纯逻辑，按源码链接进来最干净。
+    -->
+    <Compile Include="..\MeterAcquisition\Common\AppLogger.cs">
+      <Link>Linked\AppLogger.cs</Link>
+    </Compile>
+    <Compile Include="..\MeterAcquisition\Common\MeterThresholds.cs">
+      <Link>Linked\MeterThresholds.cs</Link>
+    </Compile>
+    <Compile Include="..\MeterAcquisition\Common\ModbusCodec.cs">
+      <Link>Linked\ModbusCodec.cs</Link>
+    </Compile>
+    <Compile Include="..\MeterAcquisition\Common\MeterRegisterMap.cs">
+      <Link>Linked\MeterRegisterMap.cs</Link>
+    </Compile>
+    <!--
+      为了让测试断言的是**生产环境真正在用的那张映射表**（而不是测试里再抄一份），
+      把两个读取器及其最小依赖链一并按源码链接进来。
+      这些文件都不依赖 WinForms，只用到 System.IO.Ports 与 Npgsql（框架/包级依赖）。
+    -->
+    <Compile Include="..\MeterAcquisition\Common\Utils.cs">
+      <Link>Linked\Utils.cs</Link>
+    </Compile>
+    <Compile Include="..\MeterAcquisition\Domain\Models.cs">
+      <Link>Linked\Models.cs</Link>
+    </Compile>
+    <Compile Include="..\MeterAcquisition\Services\IMeterDataReader.cs">
+      <Link>Linked\IMeterDataReader.cs</Link>
+    </Compile>
+    <Compile Include="..\MeterAcquisition\Services\ModbusService.cs">
+      <Link>Linked\ModbusService.cs</Link>
+    </Compile>
+    <Compile Include="..\MeterAcquisition\Services\MeterDataService.cs">
+      <Link>Linked\MeterDataService.cs</Link>
+    </Compile>
+    <Compile Include="..\MeterAcquisition\Services\Amc96lE4MeterDataReader.cs">
+      <Link>Linked\Amc96lE4MeterDataReader.cs</Link>
+    </Compile>
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
+    <PackageReference Include="xunit" Version="2.9.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+    <!-- MeterThresholds.cs 依赖 Npgsql，版本与主工程 packages.config 保持一致 -->
+    <PackageReference Include="Npgsql" Version="7.0.10" />
+  </ItemGroup>
+
+</Project>
