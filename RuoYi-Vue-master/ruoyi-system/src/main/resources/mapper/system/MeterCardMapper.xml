@@ -1,0 +1,382 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+"http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.ruoyi.system.mapper.MeterCardMapper">
+
+    <resultMap type="MeterCard" id="MeterCardResult">
+        <id property="meterId" column="meter_id" />
+        <result property="meterCode" column="meter_code" />
+        <result property="meterName" column="meter_name" />
+        <result property="slaveAddress" column="slave_address" />
+        <result property="boxCode" column="box_code" />
+        <result property="boxName" column="box_name" />
+        <result property="isToolbar" column="is_toolbar" />
+        <result property="siteCode" column="site_code" />
+        <result property="siteName" column="site_name" />
+        <result property="voltageA" column="voltage_a" />
+        <result property="voltageB" column="voltage_b" />
+        <result property="voltageC" column="voltage_c" />
+        <result property="voltageAb" column="voltage_ab" />
+        <result property="voltageBc" column="voltage_bc" />
+        <result property="voltageCa" column="voltage_ca" />
+        <result property="currentA" column="current_a" />
+        <result property="currentB" column="current_b" />
+        <result property="currentC" column="current_c" />
+        <result property="activePowerTotal" column="active_power_total" />
+        <result property="reactivePowerTotal" column="reactive_power_total" />
+        <result property="apparentPowerTotal" column="apparent_power_total" />
+        <result property="powerFactorTotal" column="power_factor_total" />
+        <result property="frequency" column="frequency" />
+        <result property="dataQuality" column="data_quality" />
+        <result property="dataCollectTime" column="data_collect_time" />
+        <result property="lastCollectTime" column="last_collect_time" />
+        <result property="lastPublishTime" column="last_publish_time" />
+        <result property="meterStatusCode" column="meter_status_code" />
+        <result property="isOnline" column="is_online" />
+        <result property="forwardActiveEnergy" column="forward_active_energy" />
+        <result property="reverseActiveEnergy" column="reverse_active_energy" />
+        <result property="forwardReactiveEnergy" column="forward_reactive_energy" />
+        <result property="reverseReactiveEnergy" column="reverse_reactive_energy" />
+        <result property="currentThdA" column="current_thd_a" />
+        <result property="currentThdB" column="current_thd_b" />
+        <result property="currentThdC" column="current_thd_c" />
+        <result property="voltageThdA" column="voltage_thd_a" />
+        <result property="voltageThdB" column="voltage_thd_b" />
+        <result property="voltageThdC" column="voltage_thd_c" />
+        <result property="voltageUnbalance" column="voltage_unbalance" />
+        <result property="currentUnbalance" column="current_unbalance" />
+    </resultMap>
+
+    <sql id="MeterBaseColumns">
+        m.id AS meter_id,
+        m.meter_code,
+        m.meter_name,
+        m.slave_address,
+        b.box_code,
+        b.box_name,
+        m.is_toolbar,
+        s.site_code,
+        s.site_name
+    </sql>
+
+    <sql id="RealtimeStatusColumns">
+        rl.voltage_a,
+        rl.voltage_b,
+        rl.voltage_c,
+        rl.voltage_ab,
+        rl.voltage_bc,
+        rl.voltage_ca,
+        rl.current_a,
+        rl.current_b,
+        rl.current_c,
+        rl.active_power_total,
+        rl.reactive_power_total,
+        rl.apparent_power_total,
+        rl.power_factor_total,
+        rl.frequency,
+        rl.data_quality,
+        COALESCE(ms.last_collect_time, rl.collect_time) AS last_collect_time,
+        ms.last_publish_time,
+        ms.status_code AS meter_status_code,
+        ms.is_online
+    </sql>
+
+    <sql id="BaseJoinClause">
+        FROM meter m
+        LEFT JOIN distribution_box b ON b.id = m.box_id
+        LEFT JOIN site s ON s.id = m.site_id
+        LEFT JOIN meter_realtime_latest rl ON rl.meter_id = m.id
+        LEFT JOIN meter_status ms ON ms.meter_id = m.id
+    </sql>
+
+    <sql id="BaseWhereClause">
+        WHERE IFNULL(m.is_enabled, 1) = 1
+        <if test="meterId != null">
+            AND m.id = #{meterId}
+        </if>
+        <if test="meterName != null and meterName != ''">
+            AND m.meter_name LIKE CONCAT('%', #{meterName}, '%')
+        </if>
+        <if test="meterCode != null and meterCode != ''">
+            AND m.meter_code LIKE CONCAT('%', #{meterCode}, '%')
+        </if>
+        <if test="siteCode != null and siteCode != ''">
+            AND s.site_code LIKE CONCAT('%', #{siteCode}, '%')
+        </if>
+        <if test="siteName != null and siteName != ''">
+            AND s.site_name LIKE CONCAT('%', #{siteName}, '%')
+        </if>
+        <if test="boxCode != null and boxCode != ''">
+            AND b.box_code LIKE CONCAT('%', #{boxCode}, '%')
+        </if>
+        <if test="boxName != null and boxName != ''">
+            AND b.box_name LIKE CONCAT('%', #{boxName}, '%')
+        </if>
+    </sql>
+
+    <sql id="HistoryTimeWhereClause">
+        <if test="beginTime != null">
+            AND h.collect_time <![CDATA[>=]]> #{beginTime}
+        </if>
+        <if test="endTime != null">
+            AND h.collect_time <![CDATA[<=]]> #{endTime}
+        </if>
+    </sql>
+
+
+    <select id="selectMeterCards" resultMap="MeterCardResult">
+        SELECT
+            <include refid="MeterBaseColumns" />,
+            <include refid="RealtimeStatusColumns" />,
+            rl.collect_time AS data_collect_time
+        <include refid="BaseJoinClause" />
+        WHERE IFNULL(m.is_enabled, 1) = 1
+        ORDER BY m.is_toolbar DESC, m.slave_address ASC, m.id ASC
+    </select>
+
+    <select id="selectRealtimeMeters" parameterType="MeterCard" resultMap="MeterCardResult">
+        SELECT
+            <include refid="MeterBaseColumns" />,
+            <include refid="RealtimeStatusColumns" />,
+            rl.collect_time AS data_collect_time
+        <include refid="BaseJoinClause" />
+        <include refid="BaseWhereClause" />
+        ORDER BY m.is_toolbar DESC, m.slave_address ASC, m.id ASC
+    </select>
+
+    <select id="selectEnergyMeters" parameterType="MeterCard" resultMap="MeterCardResult">
+        SELECT
+            <include refid="MeterBaseColumns" />,
+            <include refid="RealtimeStatusColumns" />,
+            el.collect_time AS data_collect_time,
+            el.forward_active_energy,
+            el.reverse_active_energy,
+            el.forward_reactive_energy,
+            el.reverse_reactive_energy
+        <include refid="BaseJoinClause" />
+        LEFT JOIN meter_energy_latest el ON el.meter_id = m.id
+        <include refid="BaseWhereClause" />
+        ORDER BY m.is_toolbar DESC, m.slave_address ASC, m.id ASC
+    </select>
+
+    <select id="selectQualityMeters" parameterType="MeterCard" resultMap="MeterCardResult">
+        SELECT
+            <include refid="MeterBaseColumns" />,
+            <include refid="RealtimeStatusColumns" />,
+            ql.collect_time AS data_collect_time,
+            ql.current_thd_a,
+            ql.current_thd_b,
+            ql.current_thd_c,
+            ql.voltage_thd_a,
+            ql.voltage_thd_b,
+            ql.voltage_thd_c,
+            ql.voltage_unbalance,
+            ql.current_unbalance
+        <include refid="BaseJoinClause" />
+        LEFT JOIN meter_power_quality_latest ql ON ql.meter_id = m.id
+        <include refid="BaseWhereClause" />
+        ORDER BY m.is_toolbar DESC, m.slave_address ASC, m.id ASC
+    </select>
+
+    <select id="selectRealtimeHistoryTrend" parameterType="MeterCard" resultMap="MeterCardResult">
+        SELECT * FROM (
+            SELECT
+                h.collect_time AS data_collect_time,
+                h.collect_time AS last_collect_time,
+                h.voltage_a, h.voltage_b, h.voltage_c,
+                h.current_a, h.current_b, h.current_c,
+                h.active_power_total, h.reactive_power_total,
+                h.apparent_power_total, h.power_factor_total, h.frequency
+            FROM meter_realtime_history h
+            WHERE h.meter_id = #{meterId}
+              AND h.collect_time <![CDATA[>=]]> #{beginTime}
+              AND h.collect_time <![CDATA[<=]]> #{endTime}
+            ORDER BY h.collect_time DESC
+            LIMIT 240
+        ) trend_points
+        ORDER BY data_collect_time
+    </select>
+
+    <select id="selectEnergyHistoryTrend" parameterType="MeterCard" resultMap="MeterCardResult">
+        SELECT * FROM (
+            SELECT
+                h.collect_time AS data_collect_time,
+                h.collect_time AS last_collect_time,
+                h.forward_active_energy, h.reverse_active_energy,
+                h.forward_reactive_energy, h.reverse_reactive_energy
+            FROM meter_energy_history h
+            WHERE h.meter_id = #{meterId}
+              AND h.collect_time <![CDATA[>=]]> #{beginTime}
+              AND h.collect_time <![CDATA[<=]]> #{endTime}
+            ORDER BY h.collect_time DESC
+            LIMIT 240
+        ) trend_points
+        ORDER BY data_collect_time
+    </select>
+
+    <select id="selectFirstForwardActiveEnergy" parameterType="MeterCard" resultType="java.math.BigDecimal">
+        SELECT forward_active_energy
+        FROM meter_energy_history
+        WHERE meter_id = #{meterId}
+          AND collect_time <![CDATA[>=]]> #{beginTime}
+          AND collect_time <![CDATA[<=]]> #{endTime}
+          AND forward_active_energy IS NOT NULL
+        ORDER BY collect_time ASC
+        LIMIT 1
+    </select>
+
+    <select id="selectLastForwardActiveEnergy" parameterType="MeterCard" resultType="java.math.BigDecimal">
+        SELECT forward_active_energy
+        FROM meter_energy_history
+        WHERE meter_id = #{meterId}
+          AND collect_time <![CDATA[>=]]> #{beginTime}
+          AND collect_time <![CDATA[<=]]> #{endTime}
+          AND forward_active_energy IS NOT NULL
+        ORDER BY collect_time DESC
+        LIMIT 1
+    </select>
+
+    <select id="countForwardActiveEnergyReadings" parameterType="MeterCard" resultType="long">
+        SELECT COUNT(1)
+        FROM meter_energy_history
+        WHERE meter_id = #{meterId}
+          AND collect_time <![CDATA[>=]]> #{beginTime}
+          AND collect_time <![CDATA[<=]]> #{endTime}
+          AND forward_active_energy IS NOT NULL
+    </select>
+
+    <select id="selectQualityHistoryTrend" parameterType="MeterCard" resultMap="MeterCardResult">
+        SELECT * FROM (
+            SELECT
+                h.collect_time AS data_collect_time,
+                h.collect_time AS last_collect_time,
+                h.current_thd_a, h.current_thd_b, h.current_thd_c,
+                h.voltage_thd_a, h.voltage_thd_b, h.voltage_thd_c,
+                h.voltage_unbalance, h.current_unbalance
+            FROM meter_power_quality_history h
+            WHERE h.meter_id = #{meterId}
+              AND h.collect_time <![CDATA[>=]]> #{beginTime}
+              AND h.collect_time <![CDATA[<=]]> #{endTime}
+            ORDER BY h.collect_time DESC
+            LIMIT 240
+        ) trend_points
+        ORDER BY data_collect_time
+    </select>
+
+    <select id="selectRealtimeHistory" parameterType="MeterCard" resultMap="MeterCardResult">
+        SELECT
+            <include refid="MeterBaseColumns" />,
+            h.voltage_a,
+            h.voltage_b,
+            h.voltage_c,
+            h.voltage_ab,
+            h.voltage_bc,
+            h.voltage_ca,
+            h.current_a,
+            h.current_b,
+            h.current_c,
+            h.active_power_total,
+            h.reactive_power_total,
+            h.apparent_power_total,
+            h.power_factor_total,
+            h.frequency,
+            h.collect_time AS data_collect_time,
+            h.collect_time AS last_collect_time
+        FROM meter_realtime_history h
+        INNER JOIN meter m ON m.id = h.meter_id
+        LEFT JOIN distribution_box b ON b.id = m.box_id
+        LEFT JOIN site s ON s.id = m.site_id
+        <include refid="BaseWhereClause" />
+        <include refid="HistoryTimeWhereClause" />
+        ORDER BY h.collect_time DESC, m.id ASC
+    </select>
+
+    <select id="selectEnergyHistory" parameterType="MeterCard" resultMap="MeterCardResult">
+        SELECT
+            <include refid="MeterBaseColumns" />,
+            el.collect_time AS last_collect_time,
+            el.collect_time AS data_collect_time,
+            el.forward_active_energy,
+            el.reverse_active_energy,
+            el.forward_reactive_energy,
+            el.reverse_reactive_energy
+        FROM meter_energy_history el
+        INNER JOIN meter m ON m.id = el.meter_id
+        LEFT JOIN distribution_box b ON b.id = m.box_id
+        LEFT JOIN site s ON s.id = m.site_id
+        <include refid="BaseWhereClause" />
+        <if test="beginTime != null">
+            AND el.collect_time <![CDATA[>=]]> #{beginTime}
+        </if>
+        <if test="endTime != null">
+            AND el.collect_time <![CDATA[<=]]> #{endTime}
+        </if>
+        ORDER BY el.collect_time DESC, m.id ASC
+    </select>
+
+    <select id="selectQualityHistory" parameterType="MeterCard" resultMap="MeterCardResult">
+        SELECT
+            <include refid="MeterBaseColumns" />,
+            COALESCE(ms.last_collect_time, qh.collect_time) AS last_collect_time,
+            ms.last_publish_time,
+            ms.status_code AS meter_status_code,
+            ms.is_online,
+            qh.collect_time AS data_collect_time,
+            qh.current_thd_a,
+            qh.current_thd_b,
+            qh.current_thd_c,
+            qh.voltage_thd_a,
+            qh.voltage_thd_b,
+            qh.voltage_thd_c,
+            qh.voltage_unbalance,
+            qh.current_unbalance
+        FROM meter_power_quality_history qh
+        INNER JOIN meter m ON m.id = qh.meter_id
+        LEFT JOIN distribution_box b ON b.id = m.box_id
+        LEFT JOIN site s ON s.id = m.site_id
+        <include refid="BaseWhereClause" />
+        <if test="beginTime != null">
+            AND qh.collect_time <![CDATA[>=]]> #{beginTime}
+        </if>
+        <if test="endTime != null">
+            AND qh.collect_time <![CDATA[<=]]> #{endTime}
+        </if>
+        ORDER BY qh.collect_time DESC, m.id ASC
+    </select>
+
+    <select id="selectEnergyReadings" resultType="com.ruoyi.system.domain.MeterEnergyReading">
+        SELECT h.meter_id AS meterId,
+               h.collect_time AS collectTime,
+               h.forward_active_energy AS forwardActiveEnergy
+        FROM meter_energy_history h
+        WHERE h.collect_time <![CDATA[>=]]> #{beginTime}
+          AND h.collect_time <![CDATA[<=]]> #{endTime}
+          AND h.forward_active_energy IS NOT NULL
+        ORDER BY h.meter_id, h.collect_time
+    </select>
+
+    <select id="selectRealtimeDetail" resultMap="MeterCardResult">
+        SELECT
+            <include refid="MeterBaseColumns" />,
+            <include refid="RealtimeStatusColumns" />,
+            rl.collect_time AS data_collect_time,
+            el.forward_active_energy,
+            el.reverse_active_energy,
+            el.forward_reactive_energy,
+            el.reverse_reactive_energy,
+            ql.current_thd_a,
+            ql.current_thd_b,
+            ql.current_thd_c,
+            ql.voltage_thd_a,
+            ql.voltage_thd_b,
+            ql.voltage_thd_c,
+            ql.voltage_unbalance,
+            ql.current_unbalance
+        <include refid="BaseJoinClause" />
+        LEFT JOIN meter_energy_latest el ON el.meter_id = m.id
+        LEFT JOIN meter_power_quality_latest ql ON ql.meter_id = m.id
+        WHERE m.id = #{meterId}
+        LIMIT 1
+    </select>
+</mapper>

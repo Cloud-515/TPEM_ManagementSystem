@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.ruoyi.system.mapper.MeterTopologyMapper">
+  <resultMap id="RegionResult" type="com.ruoyi.system.domain.MeterTopologyRegion">
+    <id property="regionId" column="region_id" />
+    <result property="regionName" column="region_name" />
+    <result property="sortOrder" column="sort_order" />
+  </resultMap>
+  <resultMap id="DeviceResult" type="com.ruoyi.system.domain.MeterTopologyDevice">
+    <result property="regionId" column="region_id" />
+    <result property="meterId" column="meter_id" />
+    <result property="sortOrder" column="sort_order" />
+  </resultMap>
+
+  <select id="selectRegions" resultMap="RegionResult">select region_id, region_name, sort_order from meter_topology_region order by sort_order, region_id</select>
+  <select id="selectDevices" resultMap="DeviceResult">select region_id, meter_id, sort_order from meter_topology_device order by region_id, sort_order, meter_id</select>
+  <delete id="deleteDevices">delete from meter_topology_device</delete>
+  <delete id="deleteRegions">delete from meter_topology_region</delete>
+  <insert id="insertRegions">
+    insert into meter_topology_region (region_id, region_name, sort_order) values
+    <foreach collection="list" item="item" separator=",">(#{item.regionId}, #{item.regionName}, #{item.sortOrder})</foreach>
+  </insert>
+  <insert id="insertDevices">
+    insert into meter_topology_device (region_id, meter_id, sort_order) values
+    <foreach collection="list" item="item" separator=",">(#{item.regionId}, #{item.meterId}, #{item.sortOrder})</foreach>
+  </insert>
+</mapper>
