@@ -239,14 +239,11 @@ namespace MeterAcquisition.HeatPump.Forms
             }
         }
 
-        private static Label CreateFilterLabel(string text)
-        {
-            return new Label { Text = text, AutoSize = true, Margin = new Padding(5, 9, 2, 3) };
-        }
-
         private static DateTimePicker CreateDatePicker(DateTime value)
         {
-            return new DateTimePicker { Width = 148, Format = DateTimePickerFormat.Custom, CustomFormat = "yyyy-MM-dd HH:mm", ShowUpDown = true, Value = value };
+            // 宽度必须放得下 "yyyy-MM-dd HH:mm" 加上下调节钮：微软雅黑 9.75 下约需 168px。
+            // 原来写 148，靠容器缩放（×1.24）凑出 184 才刚好；缩放统一成 1 倍后就把日期切成 "2026-08-26 00:0"。
+            return new DateTimePicker { Width = 190, Format = DateTimePickerFormat.Custom, CustomFormat = "yyyy-MM-dd HH:mm", ShowUpDown = true, Value = value, Font = UiStyle.BodyFont };
         }
 
         private void EnsureHistoryChart()

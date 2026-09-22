@@ -23,7 +23,7 @@ namespace MeterAcquisition
             //
             // MeterOverviewControl
             //
-            AutoScaleMode = AutoScaleMode.Font;
+            AutoScaleMode = AutoScaleMode.Inherit; // UI-19：缩放基准统一交给 MainForm
             BackColor = Color.FromArgb(245, 247, 250);
             Controls.Add(_sectionsPanel);
             Dock = DockStyle.Fill;

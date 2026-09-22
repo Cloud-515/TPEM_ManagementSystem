@@ -6,6 +6,8 @@
     <IsPackable>false</IsPackable>
     <AssemblyName>TPEM.Tests</AssemblyName>
     <RootNamespace>Tpem.Tests</RootNamespace>
+    <!-- UiStyleTests 断言的是 WinForms 控件的实际首选尺寸，需要引 System.Windows.Forms/System.Drawing -->
+    <UseWindowsForms>true</UseWindowsForms>
     <!-- 解决方案里其余两个项目是 packages.config 老式工程，这里用 SDK 式独立还原，互不影响 -->
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
   </PropertyGroup>
@@ -52,6 +54,10 @@
     </Compile>
     <Compile Include="..\MeterAcquisition\Services\Amc96lE4MeterDataReader.cs">
       <Link>Linked\Amc96lE4MeterDataReader.cs</Link>
+    </Compile>
+    <!-- 界面规范（UI-15）：断言的是生产代码里那一份 UiStyle，不在测试里另抄一套常量 -->
+    <Compile Include="..\MeterAcquisition\UI\UiStyle.cs">
+      <Link>Linked\UiStyle.cs</Link>
     </Compile>
   </ItemGroup>
 

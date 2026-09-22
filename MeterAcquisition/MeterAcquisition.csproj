@@ -158,6 +158,7 @@
     <Compile Include="Services\Amc96lE4MeterDataReader.cs" />
     <Compile Include="Domain\MeterManager.cs" />
     <Compile Include="UI\Rendering\MeterGridRenderer.cs" />
+    <Compile Include="UI\UiStyle.cs" />
     <Compile Include="Services\HistoryQueryService.cs" />
     <Compile Include="HeatPump\CompilerCompatibility.cs" />
     <Compile Include="HeatPump\GlobalUsings.cs" />

@@ -1,4 +1,3 @@
-using System.Drawing;
 using System.Windows.Forms;
 
 namespace MeterAcquisition.Thermostat.Forms
@@ -14,15 +13,25 @@ namespace MeterAcquisition.Thermostat.Forms
         private void InitializeComponent()
         {
             _contentPanel = new Panel { Dock = DockStyle.Fill, AutoScroll = true };
-            _toolbar = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, WrapContents = true, Padding = new Padding(8), Margin = Padding.Empty };
-            _connectionBar = new ThermostatConnectionBar { Dock = DockStyle.Fill, Margin = new Padding(0, 0, 12, 4) };
-            _controlBar = new ThermostatControlBar { Dock = DockStyle.Fill, Margin = new Padding(0, 0, 12, 4) };
-            _statusBar = new ThermostatStatusBar { Dock = DockStyle.Fill, Margin = new Padding(0, 0, 12, 4) };
-            _portComboBox = _connectionBar.PortComboBox; _startAddress = _connectionBar.StartAddress; _endAddress = _connectionBar.EndAddress;
-            _modeComboBox = _controlBar.ModeComboBox; _fanSpeedComboBox = _controlBar.FanSpeedComboBox; _statusLabel = _statusBar.StatusLabel; _grid = CreateGrid();
-            _contentPanel.Controls.Add(_grid); _contentPanel.Controls.Add(_toolbar);
-            _toolbar.Controls.Add(_connectionBar); _toolbar.Controls.Add(_controlBar); _toolbar.Controls.Add(_statusBar);
-            Controls.Add(_contentPanel); AutoScaleMode = AutoScaleMode.Font; Dock = DockStyle.Fill;
+            _toolbar = new FlowLayoutPanel { Dock = DockStyle.Top };
+            _connectionBar = new ThermostatConnectionBar();
+            _controlBar = new ThermostatControlBar();
+            _statusBar = new ThermostatStatusBar();
+            _portComboBox = _connectionBar.PortComboBox;
+            _startAddress = _connectionBar.StartAddress;
+            _endAddress = _connectionBar.EndAddress;
+            _modeComboBox = _controlBar.ModeComboBox;
+            _fanSpeedComboBox = _controlBar.FanSpeedComboBox;
+            _statusLabel = _statusBar.StatusLabel;
+            _grid = CreateGrid();
+            _contentPanel.Controls.Add(_grid);
+            _contentPanel.Controls.Add(_toolbar);
+            // 三条子工具条按统一间距排布；每条自己不换行，换行只发生在三条之间。
+            UiStyle.RebuildToolbar(_toolbar, _connectionBar, _controlBar, _statusBar);
+            Controls.Add(_contentPanel);
+            // UI-19：缩放基准统一交给 MainForm，见 ThermostatConnectionBar.Designer.cs 的说明。
+            AutoScaleMode = AutoScaleMode.Inherit;
+            Dock = DockStyle.Fill;
         }
     }
 }

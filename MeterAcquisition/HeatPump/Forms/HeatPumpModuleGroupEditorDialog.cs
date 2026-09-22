@@ -19,23 +19,45 @@ public sealed class HeatPumpModuleGroupEditorDialog : Form
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = false;
         MinimizeBox = false;
-        ClientSize = new Size(410, 360);
+        Font = UiStyle.BodyFont;
+        ClientSize = new Size(430, 380);
 
-        var groupNameLabel = new Label { Text = "分组名称", AutoSize = true, Location = new Point(16, 18) };
-        _groupNameTextBox = new TextBox { Location = new Point(88, 14), Width = 300 };
-        var modulesLabel = new Label { Text = "模块成员", AutoSize = true, Location = new Point(16, 54) };
+        _groupNameTextBox = new TextBox();
         _modulesList = new CheckedListBox
         {
-            Location = new Point(16, 78),
-            Size = new Size(372, 220),
+            Dock = DockStyle.Fill,
             CheckOnClick = true,
-            DisplayMember = nameof(ModuleItem.DisplayName)
+            DisplayMember = nameof(ModuleItem.DisplayName),
+            Font = UiStyle.BodyFont,
         };
-        var saveButton = new Button { Text = "保存", DialogResult = DialogResult.None, Location = new Point(232, 318), Width = 75 };
-        var cancelButton = new Button { Text = "取消", DialogResult = DialogResult.Cancel, Location = new Point(313, 318), Width = 75 };
+
+        // 原来全是绝对坐标（标签 x=16、输入框 x=88、列表 372×220、按钮 y=318），
+        // 字体一变标签就压输入框、列表也不会跟着窗口走。改成两列表单 + 底部按钮行。
+        var grid = UiStyle.CreateFormGrid();
+        grid.AutoSize = false; // 列表行用百分比高度，容器不能再 AutoSize
+        UiStyle.AddFormRow(grid, "分组名称", _groupNameTextBox);
+        var listRow = grid.RowStyles.Count;
+        grid.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+        grid.RowCount = grid.RowStyles.Count;
+        grid.Controls.Add(
+            new Label
+            {
+                Text = "模块成员",
+                AutoSize = true,
+                Font = UiStyle.BodyFont,
+                Anchor = AnchorStyles.Left | AnchorStyles.Top,
+                Margin = new Padding(0, UiStyle.RowGap, UiStyle.LabelGap + UiStyle.Gap, 0),
+            },
+            0,
+            listRow);
+        grid.Controls.Add(_modulesList, 1, listRow);
+
+        var saveButton = new Button { Text = "保存", DialogResult = DialogResult.None };
+        var cancelButton = new Button { Text = "取消", DialogResult = DialogResult.Cancel };
         saveButton.Click += SaveButton_Click;
 
-        Controls.AddRange(new Control[] { groupNameLabel, _groupNameTextBox, modulesLabel, _modulesList, saveButton, cancelButton });
+        Controls.Add(grid);
+        Controls.Add(UiStyle.DialogButtonRow(saveButton, cancelButton));
         AcceptButton = saveButton;
         CancelButton = cancelButton;
         LoadModules();

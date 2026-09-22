@@ -22,6 +22,10 @@ namespace MeterAcquisition
 
         #region Windows Form Designer generated code
 
+        // 注意（UI-15）：本文件里按钮的 Size / Padding / Margin 已经不是最终值。
+        // 构造函数末尾的 MainForm.ApplyLayoutStandard() 会用 UiStyle 统一覆盖
+        // 按钮尺寸、内外边距和工具条排布 —— 要调按钮外观请改 UI/UiStyle.cs，
+        // 在这里改（例如把 Padding 改成 12,6,12,6）不会生效。
         private void InitializeComponent()
         {
             this.components = new System.ComponentModel.Container();
@@ -1198,11 +1202,12 @@ namespace MeterAcquisition
             // cmbQuickMeter
             // 
             this.cmbQuickMeter.DropDownStyle = System.Windows.Forms.ComboBoxStyle.DropDownList;
+            this.cmbQuickMeter.DropDownWidth = 460;
             this.cmbQuickMeter.FormattingEnabled = true;
             this.cmbQuickMeter.Location = new System.Drawing.Point(60, 8);
             this.cmbQuickMeter.Margin = new System.Windows.Forms.Padding(4);
             this.cmbQuickMeter.Name = "cmbQuickMeter";
-            this.cmbQuickMeter.Size = new System.Drawing.Size(280, 29);
+            this.cmbQuickMeter.Size = new System.Drawing.Size(230, 29);
             this.cmbQuickMeter.TabIndex = 1;
             // 
             // lblQuickMetricCaption
@@ -1218,11 +1223,12 @@ namespace MeterAcquisition
             // cmbQuickMetric
             // 
             this.cmbQuickMetric.DropDownStyle = System.Windows.Forms.ComboBoxStyle.DropDownList;
+            this.cmbQuickMetric.DropDownWidth = 240;
             this.cmbQuickMetric.FormattingEnabled = true;
             this.cmbQuickMetric.Location = new System.Drawing.Point(400, 8);
             this.cmbQuickMetric.Margin = new System.Windows.Forms.Padding(4);
             this.cmbQuickMetric.Name = "cmbQuickMetric";
-            this.cmbQuickMetric.Size = new System.Drawing.Size(180, 29);
+            this.cmbQuickMetric.Size = new System.Drawing.Size(156, 29);
             this.cmbQuickMetric.TabIndex = 3;
             // 
             // lblQuickStartCaption
@@ -1588,11 +1594,12 @@ namespace MeterAcquisition
             // cmbCompareMetric
             // 
             this.cmbCompareMetric.DropDownStyle = System.Windows.Forms.ComboBoxStyle.DropDownList;
+            this.cmbCompareMetric.DropDownWidth = 240;
             this.cmbCompareMetric.FormattingEnabled = true;
             this.cmbCompareMetric.Location = new System.Drawing.Point(94, 8);
             this.cmbCompareMetric.Margin = new System.Windows.Forms.Padding(4);
             this.cmbCompareMetric.Name = "cmbCompareMetric";
-            this.cmbCompareMetric.Size = new System.Drawing.Size(180, 29);
+            this.cmbCompareMetric.Size = new System.Drawing.Size(156, 29);
             this.cmbCompareMetric.TabIndex = 1;
             // 
             // lblCompareStartCaption

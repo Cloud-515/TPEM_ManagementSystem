@@ -69,7 +69,8 @@ namespace MeterAcquisition
             _rootLayout.Controls.Add(_cardsPanel, 0, 3);
             _rootLayout.Controls.Add(_pageStatusLabel, 0, 4);
             Controls.Add(_rootLayout);
-            AutoScaleMode = AutoScaleMode.Font;
+            // UI-19：缩放基准统一交给 MainForm，见 Thermostat/Forms/ThermostatConnectionBar.Designer.cs 的说明。
+            AutoScaleMode = AutoScaleMode.Inherit;
             BackColor = Color.White;
             Dock = DockStyle.Fill;
             ResumeLayout(false);
@@ -88,18 +89,19 @@ namespace MeterAcquisition
                 Dock = DockStyle.Fill,
                 TextAlign = ContentAlignment.MiddleLeft,
                 Text = text,
-                Font = new Font("Segoe UI", 12F, FontStyle.Bold),
+                Font = UiStyle.MetricFont,
                 ForeColor = Color.FromArgb(30, 41, 59)
             };
         }
 
         private static void AddSummaryCard(TableLayoutPanel summary, int column, string title, Label value)
         {
-            var card = new Panel { Dock = DockStyle.Fill, BackColor = Color.White, BorderStyle = BorderStyle.FixedSingle, Margin = new Padding(column == 0 ? 0 : 8, 0, 0, 0), Padding = new Padding(12), MinimumSize = new Size(0, 84) };
+            var card = new Panel { Dock = DockStyle.Fill, BackColor = Color.White, BorderStyle = BorderStyle.FixedSingle, Margin = new Padding(column == 0 ? 0 : UiStyle.Gap, 0, 0, 0), Padding = new Padding(12), MinimumSize = new Size(0, 88) };
             // 先加 Dock=Fill 的数值，再加 Dock=Top 的标题：
             // WinForms 的停靠顺序是后加的先占位，标题因此在上、数值占剩下的空间。
             card.Controls.Add(value);
-            card.Controls.Add(new Label { AutoSize = false, Dock = DockStyle.Top, Height = 24, Text = title, ForeColor = Color.DimGray });
+            // 标题高度交给 AutoSize：原来写死 24px，换字体或放大字号就会把字切掉（UI-4 同类问题）。
+            card.Controls.Add(new Label { AutoSize = true, Dock = DockStyle.Top, Text = title, ForeColor = Color.DimGray, Font = UiStyle.BodyFont });
             summary.Controls.Add(card, column, 0);
         }
     }

@@ -71,77 +71,6 @@ namespace MeterAcquisition.Thermostat.Forms
             base.Dispose(disposing);
         }
 
-        private FlowLayoutPanel CreateToolbar(out Button connectButton, out Button disconnectButton, out Button scanButton, out Button refreshButton, out Button powerButton, out Button applyModeButton, out Button applyFanSpeedButton, out Button temperatureButton, out Button fanDiagnosticButton)
-        {
-            var toolbar = new FlowLayoutPanel
-            {
-                Dock = DockStyle.Top,
-                AutoSize = true,
-                AutoSizeMode = AutoSizeMode.GrowAndShrink,
-                WrapContents = true,
-                FlowDirection = FlowDirection.LeftToRight,
-                Padding = new Padding(8),
-                Margin = Padding.Empty
-            };
-
-            connectButton = CreateButton("连接"); disconnectButton = CreateButton("断开"); scanButton = CreateButton("扫描"); refreshButton = CreateButton("刷新");
-            powerButton = CreateButton("切换开关"); applyModeButton = CreateButton("写入模式"); applyFanSpeedButton = CreateButton("写入风速"); temperatureButton = CreateButton("设温"); fanDiagnosticButton = CreateButton("风机诊断");
-
-            var connectionGroup = CreateToolbarGroup();
-            connectionGroup.Controls.Add(CreateField("串口", _portComboBox));
-            connectionGroup.Controls.Add(CreateField("地址", _startAddress));
-            connectionGroup.Controls.Add(CreateField("至", _endAddress));
-            connectionGroup.Controls.Add(connectButton);
-            connectionGroup.Controls.Add(disconnectButton);
-            connectionGroup.Controls.Add(scanButton);
-            connectionGroup.Controls.Add(refreshButton);
-
-            var controlGroup = CreateToolbarGroup();
-            controlGroup.Controls.Add(powerButton);
-            controlGroup.Controls.Add(temperatureButton);
-            controlGroup.Controls.Add(CreateField("目标模式", _modeComboBox));
-            controlGroup.Controls.Add(applyModeButton);
-            controlGroup.Controls.Add(CreateField("目标风速", _fanSpeedComboBox));
-            controlGroup.Controls.Add(applyFanSpeedButton);
-            controlGroup.Controls.Add(fanDiagnosticButton);
-
-            var statusGroup = CreateToolbarGroup();
-            statusGroup.FlowDirection = FlowDirection.TopDown;
-            statusGroup.WrapContents = false;
-            statusGroup.MinimumSize = new Size(280, 0);
-            statusGroup.Controls.Add(_statusLabel);
-
-            toolbar.Controls.Add(connectionGroup);
-            toolbar.Controls.Add(controlGroup);
-            toolbar.Controls.Add(statusGroup);
-            return toolbar;
-        }
-
-        private static FlowLayoutPanel CreateToolbarGroup()
-        {
-            return new FlowLayoutPanel
-            {
-                AutoSize = true,
-                AutoSizeMode = AutoSizeMode.GrowAndShrink,
-                WrapContents = false,
-                FlowDirection = FlowDirection.LeftToRight,
-                Margin = new Padding(0, 0, 12, 4),
-                Padding = Padding.Empty
-            };
-        }
-
-        private static FlowLayoutPanel CreateField(string text, Control input)
-        {
-            var field = CreateToolbarGroup();
-            field.Margin = new Padding(0, 0, 8, 0);
-            field.Controls.Add(new Label { Text = text, AutoSize = true, Margin = new Padding(0, 8, 4, 0) });
-            input.Margin = new Padding(0, 2, 0, 2);
-            field.Controls.Add(input);
-            return field;
-        }
-
-        private static Button CreateButton(string text) => new Button { Text = text, AutoSize = true, MinimumSize = new Size(76, 32), Margin = new Padding(6, 2, 6, 2), Padding = new Padding(12, 6, 12, 6) };
-
         private void BindSelections()
         {
             _modeComboBox.DataSource = new[]
@@ -228,12 +157,13 @@ namespace MeterAcquisition.Thermostat.Forms
         private async Task ChangeTemperatureAsync()
         {
             var device = GetSelectedDevice(); if (device == null) return;
-            using (var dialog = new Form { Text = "设置温度", FormBorderStyle = FormBorderStyle.FixedDialog, StartPosition = FormStartPosition.CenterParent, ClientSize = new Size(260, 92), MinimumSize = new Size(276, 130), MaximizeBox = false, MinimizeBox = false, AutoScaleMode = AutoScaleMode.Font, Padding = new Padding(12) })
+            using (var dialog = new Form { Text = "设置温度", FormBorderStyle = FormBorderStyle.FixedDialog, StartPosition = FormStartPosition.CenterParent, ClientSize = new Size(260, 92), MinimumSize = new Size(276, 130), MaximizeBox = false, MinimizeBox = false, AutoScaleMode = AutoScaleMode.Font, Font = UiStyle.BodyFont, Padding = new Padding(12) })
             {
                 var layout = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, WrapContents = false, FlowDirection = FlowDirection.LeftToRight };
-                var value = new NumericUpDown { Width = 132, Minimum = 5, Maximum = 35, DecimalPlaces = 1, Increment = 0.1m, Value = device.Telemetry == null ? 26m : device.Telemetry.SetTemperatureCelsius, Margin = new Padding(0, 4, 8, 4) };
-                var ok = new Button { Text = "确定", DialogResult = DialogResult.OK, AutoSize = true, MinimumSize = new Size(68, 32), Margin = new Padding(0, 2, 0, 2), Padding = new Padding(12, 6, 12, 6) };
-                layout.Controls.Add(value); layout.Controls.Add(ok); dialog.Controls.Add(layout); dialog.AcceptButton = ok;
+                var value = new NumericUpDown { Width = 132, Minimum = 5, Maximum = 35, DecimalPlaces = 1, Increment = 0.1m, Value = device.Telemetry == null ? 26m : device.Telemetry.SetTemperatureCelsius, Font = UiStyle.BodyFont };
+                var ok = UiStyle.CreateButton("确定");
+                ok.DialogResult = DialogResult.OK;
+                layout.Controls.Add(UiStyle.Cell(value)); layout.Controls.Add(ok); dialog.Controls.Add(layout); dialog.AcceptButton = ok;
                 if (dialog.ShowDialog(this) == DialogResult.OK) await RunControlAsync(() => _workspace.SetTemperatureAsync(device.Device.SlaveId, value.Value));
             }
         }

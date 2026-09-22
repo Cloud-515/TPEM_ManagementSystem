@@ -23,59 +23,48 @@ public sealed class HeatPumpDeviceEditorDialog : Form
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = false;
         MinimizeBox = false;
-        ClientSize = new Size(410, module == null ? 180 : 265);
+        Font = UiStyle.BodyFont;
+        ClientSize = new Size(430, module == null ? 170 : 250);
 
-        var top = 16;
-        Controls.Add(CreateReadOnlyField("控制器站号", controller.SlaveId.ToString(), top));
-        top += 34;
+        // 原来是绝对坐标：标签 x=16、输入框 x=90 写死，
+        // "控制器站号"这种 5 字标签在雅黑 9.75 下宽 135px，直接压到文本框上（实测重叠 8px）。
+        // 改成两列表单，左列宽度由标签内容决定。
+        var grid = UiStyle.CreateFormGrid();
+        UiStyle.AddFormRow(grid, "控制器站号", CreateReadOnlyBox(controller.SlaveId.ToString()));
         if (module != null)
         {
-            Controls.Add(CreateReadOnlyField("模块编号", (module.ModuleIndex + 1).ToString(), top));
-            top += 34;
+            UiStyle.AddFormRow(grid, "模块编号", CreateReadOnlyBox((module.ModuleIndex + 1).ToString()));
         }
 
-        Controls.Add(new Label { Text = "显示名称", AutoSize = true, Location = new Point(16, top + 4) });
-        _nameTextBox = new TextBox { Location = new Point(90, top), Width = 288, Text = module == null ? controller.Name : module.Name };
-        Controls.Add(_nameTextBox);
-        top += 40;
+        _nameTextBox = new TextBox { Text = module == null ? controller.Name : module.Name };
+        UiStyle.AddFormRow(grid, "显示名称", _nameTextBox);
 
         if (module != null)
         {
-            _enabledCheckBox = new CheckBox { Text = "启用模块", AutoSize = true, Location = new Point(90, top), Checked = module.IsEnabled };
-            Controls.Add(_enabledCheckBox);
-            top += 30;
+            _enabledCheckBox = new CheckBox { Text = "启用模块", AutoSize = true, Checked = module.IsEnabled };
+            UiStyle.AddFormRow(grid, string.Empty, _enabledCheckBox, false);
 
-            Controls.Add(new Label { Text = "显示排序", AutoSize = true, Location = new Point(16, top + 4) });
             _displayOrderInput = new NumericUpDown
             {
-                Location = new Point(90, top),
                 Width = 100,
                 Minimum = 0,
                 Maximum = 10000,
                 Value = Math.Max(0, module.DisplayOrder)
             };
-            Controls.Add(_displayOrderInput);
-            top += 40;
+            UiStyle.AddFormRow(grid, "显示排序", _displayOrderInput, false);
         }
 
-        var saveButton = new Button { Text = "保存", Location = new Point(222, ClientSize.Height - 38), Width = 75 };
-        var cancelButton = new Button { Text = "取消", DialogResult = DialogResult.Cancel, Location = new Point(303, ClientSize.Height - 38), Width = 75 };
+        var saveButton = new Button { Text = "保存" };
+        var cancelButton = new Button { Text = "取消", DialogResult = DialogResult.Cancel };
         saveButton.Click += SaveButton_Click;
-        Controls.Add(saveButton);
-        Controls.Add(cancelButton);
+        Controls.Add(grid);
+        Controls.Add(UiStyle.DialogButtonRow(saveButton, cancelButton));
         AcceptButton = saveButton;
         CancelButton = cancelButton;
     }
 
-    private static Control CreateReadOnlyField(string label, string value, int top)
-    {
-        var field = new TextBox { Location = new Point(90, 0), Width = 288, ReadOnly = true, Text = value, TabStop = false };
-        var labelControl = new Label { Text = label, AutoSize = true, Location = new Point(16, 4) };
-        var panel = new Panel { Location = new Point(0, top), Size = new Size(410, 28) };
-        panel.Controls.Add(labelControl);
-        panel.Controls.Add(field);
-        return panel;
-    }
+    private static TextBox CreateReadOnlyBox(string value) =>
+        new TextBox { ReadOnly = true, Text = value, TabStop = false };
 
     private void SaveButton_Click(object sender, EventArgs e)
     {

@@ -1,4 +1,3 @@
-using System.Drawing;
 using System.Windows.Forms;
 
 namespace MeterAcquisition.Thermostat.Forms
@@ -15,23 +14,37 @@ namespace MeterAcquisition.Thermostat.Forms
 
         private void InitializeComponent()
         {
-            _portComboBox = new ComboBox { DropDownStyle = ComboBoxStyle.DropDown, Width = 130, MinimumSize = new Size(130, 32) };
-            _startAddress = new NumericUpDown { Minimum = 1, Maximum = 99, Value = 1, Width = 60, MinimumSize = new Size(60, 32) };
-            _endAddress = new NumericUpDown { Minimum = 1, Maximum = 99, Value = 99, Width = 60, MinimumSize = new Size(60, 32) };
+            _portComboBox = new ComboBox { DropDownStyle = ComboBoxStyle.DropDown, Width = 130, Font = UiStyle.BodyFont };
             _portComboBox.Text = "COM3";
-            _portComboBox.Text = "COM3";
-            _connectButton = CreateButton("连接"); _disconnectButton = CreateButton("断开"); _scanButton = CreateButton("扫描"); _refreshButton = CreateButton("刷新");
-            var layout = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, WrapContents = true, Padding = new Padding(0), Margin = Padding.Empty };
-            layout.Controls.Add(CreateField("串口", _portComboBox)); layout.Controls.Add(CreateField("地址", _startAddress)); layout.Controls.Add(CreateField("至", _endAddress)); layout.Controls.Add(_connectButton); layout.Controls.Add(_disconnectButton); layout.Controls.Add(_scanButton); layout.Controls.Add(_refreshButton);
-            SuspendLayout(); Controls.Add(layout); AutoScaleMode = AutoScaleMode.Font; AutoSize = true; AutoSizeMode = AutoSizeMode.GrowAndShrink; ResumeLayout(false);
-        }
+            _startAddress = new NumericUpDown { Minimum = 1, Maximum = 99, Value = 1, Width = 64, Font = UiStyle.BodyFont };
+            _endAddress = new NumericUpDown { Minimum = 1, Maximum = 99, Value = 99, Width = 64, Font = UiStyle.BodyFont };
+            _connectButton = UiStyle.CreateButton("连接");
+            _disconnectButton = UiStyle.CreateButton("断开");
+            _scanButton = UiStyle.CreateButton("扫描");
+            _refreshButton = UiStyle.CreateButton("刷新");
 
-        private static FlowLayoutPanel CreateField(string text, Control input)
-        {
-            var field = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = new Padding(0, 0, 8, 0) };
-            field.Controls.Add(new Label { Text = text, AutoSize = true, Margin = new Padding(0, 8, 4, 0) }); input.Margin = new Padding(0, 2, 0, 2); field.Controls.Add(input); return field;
-        }
+            var layout = UiStyle.CreateToolbar(
+                UiStyle.Field("串口", _portComboBox),
+                UiStyle.Field("地址", _startAddress),
+                UiStyle.Field("至", _endAddress),
+                _connectButton,
+                _disconnectButton,
+                _scanButton,
+                _refreshButton);
+            layout.Dock = DockStyle.Fill;
+            layout.Padding = Padding.Empty; // 外层 _toolbar 已经留了内边距
 
-        private static Button CreateButton(string text) => new Button { Text = text, AutoSize = true, MinimumSize = new Size(76, 32), Margin = new Padding(6, 2, 6, 2), Padding = new Padding(12, 6, 12, 6) };
+            SuspendLayout();
+            Controls.Add(layout);
+            // UI-19：子容器不要自己算缩放基准。
+            // AutoScaleMode.Font + 未声明 AutoScaleDimensions 会拿 6×13 当基准，
+            // 而这里的环境字体是微软雅黑 9.75（实测 10×21），于是控件里所有像素常量被放大约 1.6 倍
+            // —— 同一份 MinimumSize(76,32) 在这里画出 95×52，在 MainForm 里画出 76×32。
+            // 改成 Inherit：整窗只由 MainForm 一处决定缩放，代码里的 1px 到哪个页面都是 1px。
+            AutoScaleMode = AutoScaleMode.Inherit;
+            AutoSize = true;
+            AutoSizeMode = AutoSizeMode.GrowAndShrink;
+            ResumeLayout(false);
+        }
     }
 }

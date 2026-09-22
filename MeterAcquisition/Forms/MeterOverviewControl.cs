@@ -105,11 +105,10 @@ namespace MeterAcquisition
             {
                 Text = titleText + "  " + meters.Count + " 台",
                 Dock = DockStyle.Top,
-                AutoSize = false,
-                Height = 38,
+                AutoSize = true,
                 Font = new Font("微软雅黑", 11, FontStyle.Bold),
                 ForeColor = Color.FromArgb(30, 80, 160),
-                Padding = new Padding(10, 8, 0, 0),
+                Padding = new Padding(10, 8, 0, 8),
                 BackColor = Color.FromArgb(240, 248, 255),
                 Margin = new Padding(0),
             };
@@ -138,8 +137,10 @@ namespace MeterAcquisition
         {
             var card = new Panel
             {
-                Width = 300,
-                Height = 190,
+                // 与"概览仪表盘"的电表卡片同尺寸（320×220）。原来是 300×190，在微软雅黑 9.75 下
+                // 内容实际需要约 208px，最下面那行状态字会被卡片边框切掉（UI-20）。
+                Width = 320,
+                Height = 220,
                 BorderStyle = BorderStyle.FixedSingle,
                 BackColor = Color.White,
                 Margin = new Padding(6),
