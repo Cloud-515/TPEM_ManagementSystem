@@ -1,6 +1,14 @@
 /*
  Navicat Premium Data Transfer
 
+ ⚠️ 警告（P4-16，2026-09-17 补充）：本文件是 2026-05-28 的全库 dump，**已落后于代码**，不要直接用它恢复或重建库。
+    它会 DROP 并重建 alarm_event，而重建语句里没有 uq_alarm_event_active ——
+    而入库服务依赖这个部分唯一索引做 ON CONFLICT (meter_id, alarm_code) WHERE status='active'。
+    一旦用本文件恢复库，告警写入会持续报 42P10，发生在业务事务内 → 每条带遥测的消息整体回滚，入库全面失败。
+    正确做法：用 sql/migrations/ 下的迁移建库（./apply.sh 查看状态与逐个应用），
+    或在本文件恢复之后立即按顺序重放 001 → 004 迁移补回索引与 meter_threshold / meter_message_log 等对象。
+    长期建议废弃本文件，只保留迁移。
+
  Source Server         : TPEM_ManagementSystem
  Source Server Type    : PostgreSQL
  Source Server Version : 180004 (180004)

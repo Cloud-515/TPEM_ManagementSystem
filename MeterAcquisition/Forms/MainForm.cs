@@ -52,6 +52,17 @@ namespace MeterAcquisition
         private readonly int _qualityIntervalSeconds;
         private readonly int _offlineTimeoutSeconds;
 
+        /// <summary>
+        /// 实际生效的掉线判定阈值（P4-8）。
+        ///
+        /// 配置值（OfflineTimeoutSeconds）在只有一两台表时够用，但一轮采集要给每台表做 3 次读、
+        /// 单次最长 500ms 超时：表一多，一轮本身就超过这个秒数，
+        /// 排在后面的卡片会周期性闪"设备掉线"，而设备其实是好的 —— 也与另两端的离线口径对不上。
+        /// 因此取"配置值"与"一轮预算"中的较大者，一轮预算按 每台表 2 秒计（含余量）。
+        /// 每个采集周期重算一次，新增/删除电表后自然跟上。
+        /// </summary>
+        private int _effectiveOfflineTimeoutSeconds;
+
         private int _boxCounter = 1;
 
         private readonly HistoryQueryService _historyQueryService = new HistoryQueryService();
@@ -149,6 +160,7 @@ namespace MeterAcquisition
             _energyIntervalSeconds = GetPositiveIntAppSetting("EnergyIntervalSeconds", 60);
             _qualityIntervalSeconds = GetPositiveIntAppSetting("QualityIntervalSeconds", 60);
             _offlineTimeoutSeconds = GetPositiveIntAppSetting("OfflineTimeoutSeconds", 15);
+            _effectiveOfflineTimeoutSeconds = _offlineTimeoutSeconds;
 
             _meterManager = new MeterManager(_meterDataService, _meterDataService2);
             _flpBoxContainer = flpDashboard;
@@ -171,6 +183,7 @@ namespace MeterAcquisition
             nudScanStart.ValueChanged += ScanRange_ValueChanged;
             nudScanEnd.ValueChanged += ScanRange_ValueChanged;
             LoadDashboardScanRangeSettings();
+            ApplyLayoutStandard();
             clockTimer.Start();
             LogEffectiveThresholds();
             this.Shown += MainForm_Shown;
@@ -254,6 +267,82 @@ namespace MeterAcquisition
                 _tabMeterOverview);
         }
 
+        /// <summary>
+        /// 统一套用界面规范（UI-15 ~ UI-20），构造函数末尾做一次。
+        ///
+        /// 分三步：
+        /// 1. 把设计器里那几条 <see cref="FlowLayoutPanel"/> 工具条按"字段组"重排 ——
+        ///    标签和它的输入框打包成一个条目，换行只会在条目之间断开
+        ///    （原来"结束时间"留在上一行、日期框跑到下一行，见 UI-18）；
+        /// 2. 所有按钮套 <see cref="UiStyle.Apply"/>：同一高度、同一最小宽度、同一内外边距，
+        ///    并且不再被 <c>Dock=Fill</c> 拉伸（"读取设备信息"原来被拉成 1324×38）；
+        /// 3. 按页签把按钮宽度取齐，避免同一页里"查询"78px、"刷新电表"112px。
+        ///
+        /// 为什么集中做而不是逐个 Designer 改：按钮散在 8 个文件、38 处，
+        /// 集中一处才能保证以后新加的按钮也自动符合规范。
+        /// </summary>
+        private void ApplyLayoutStandard()
+        {
+            // 顺序有讲究：先统一按钮本身（字体/尺寸/内边距），再重排工具条。
+            // UiStyle.Apply 会设 Margin，而 Cell/RebuildToolbar 也要设 Margin
+            // —— 后者必须最后执行，否则字段组内部的紧凑间距会被按钮的通用外边距顶掉。
+            UiStyle.ApplyToTree(this);
+
+            UiStyle.RebuildToolbar(
+                flpDashboardToolbar,
+                UiStyle.Field(lblSecondPortCaption, cmbSecondPort),
+                btnSecondConnect,
+                btnSecondDisconnect,
+                UiStyle.Cell(lblScanRangeCaption, nudScanStart, lblScanRangeSeparator, nudScanEnd),
+                btnAutoScanDashboard,
+                btnAddMeter,
+                UiStyle.Cell(lblSecondStatusDashboard));
+
+            UiStyle.RebuildToolbar(
+                flpQuickTop,
+                UiStyle.Field(lblQuickMeterCaption, cmbQuickMeter),
+                UiStyle.Field(lblQuickMetricCaption, cmbQuickMetric),
+                UiStyle.Field(lblQuickStartCaption, dtQuickStart),
+                UiStyle.Field(lblQuickEndCaption, dtQuickEnd),
+                UiStyle.Cell(btnQuickSearch, btnQuickRefresh));
+
+            UiStyle.RebuildToolbar(
+                flpQuickPaging,
+                btnQuickPrev,
+                btnQuickNext,
+                UiStyle.Cell(lblQuickPage),
+                UiStyle.Cell(lblQuickStatus));
+
+            UiStyle.RebuildToolbar(
+                flpCompareLeftTop,
+                UiStyle.Cell(lblCompareTreeCaption),
+                btnCompareRefresh);
+
+            UiStyle.RebuildToolbar(
+                flpCompareRightTop,
+                UiStyle.Field(lblCompareMetricCaption, cmbCompareMetric),
+                UiStyle.Field(lblCompareStartCaption, dtCompareStart),
+                UiStyle.Field(lblCompareEndCaption, dtCompareEnd),
+                btnCompareSearch);
+
+            UiStyle.RebuildToolbar(btnPanelParams, btnReadParams, btnWriteParams);
+
+            // "读取设备信息"原来是 Dock=Bottom 的一整条（被拉成 1127×38），
+            // 收窄成标准按钮后需要一个停靠工具条兜住它，否则会掉到 Location 处被表格盖住。
+            UiStyle.WrapInToolbar(btnReadInfo);
+            // 同一个 GroupBox 里的表格原来是"四边锚定 + 写死 Bounds"：它不认停靠区域，
+            // 上下任何一条的高度一变就被它盖住。改成 Dock=Fill 并放到 z 序最底层，
+            // GroupBox 就成了干净的三层：标签(Top) + 按钮条(Bottom) + 表格(Fill)。
+            dgvDeviceInfo.Dock = DockStyle.Fill;
+            gbInfo.Controls.SetChildIndex(dgvDeviceInfo, 0);
+
+            UiStyle.EqualizeWidths(tlpTop);
+            foreach (TabPage page in tabControlMain.TabPages)
+            {
+                UiStyle.EqualizeWidths(page);
+            }
+        }
+
         private void MeterOverview_MeterSelected(object sender, MeterSelectedEventArgs e)
         {
             ShowMeterDetails(e.MeterId);
@@ -315,21 +404,20 @@ namespace MeterAcquisition
             var bar = new FlowLayoutPanel
             {
                 Dock = DockStyle.Top,
-                AutoSize = true,
-                WrapContents = true,
-                Margin = new Padding(0, 0, 0, 12),
-                Padding = new Padding(0)
+                Margin = new Padding(0, 0, 0, 12)
             };
 
-            _cmbHeatPumpPort = CreateHeatPumpComboBox(120);
+            _cmbHeatPumpPort = CreateHeatPumpComboBox(96);
             _cmbHeatPumpBaud = CreateHeatPumpComboBox(90, new[] { "4800", "9600", "19200", "38400", "57600", "115200" });
-            _cmbHeatPumpParity = CreateHeatPumpComboBox(80, new[] { "None", "Even", "Odd" });
-            _cmbHeatPumpStopBits = CreateHeatPumpComboBox(60, new[] { "1", "2" });
+            _cmbHeatPumpParity = CreateHeatPumpComboBox(72, new[] { "None", "Even", "Odd" });
+            _cmbHeatPumpStopBits = CreateHeatPumpComboBox(56, new[] { "1", "2" });
             _nudHeatPumpScanStart = CreateHeatPumpAddressInput();
             _nudHeatPumpScanEnd = CreateHeatPumpAddressInput();
-            _btnHeatPumpConnect = new Button { Text = "连接热泵", AutoSize = true, Margin = new Padding(12, 4, 0, 4) };
-            _btnHeatPumpDisconnect = new Button { Text = "断开热泵", AutoSize = true, Enabled = false, Margin = new Padding(4) };
-            _btnHeatPumpScan = new Button { Text = "扫描线控器", AutoSize = true, Enabled = false, Margin = new Padding(4) };
+            _btnHeatPumpConnect = UiStyle.CreateButton("连接热泵");
+            _btnHeatPumpDisconnect = UiStyle.CreateButton("断开热泵");
+            _btnHeatPumpDisconnect.Enabled = false;
+            _btnHeatPumpScan = UiStyle.CreateButton("扫描线控器");
+            _btnHeatPumpScan.Enabled = false;
 
             RefreshHeatPumpPorts(false);
             LoadHeatPumpSettings();
@@ -339,15 +427,17 @@ namespace MeterAcquisition
             _btnHeatPumpDisconnect.Click += async (sender, e) => await RunGuardedAsync("热泵断开", DisconnectHeatPumpAsync);
             _btnHeatPumpScan.Click += async (sender, e) => await RunGuardedAsync("热泵扫描", ScanHeatPumpControllersAsync);
 
-            AddHeatPumpField(bar, "端口", _cmbHeatPumpPort);
-            AddHeatPumpField(bar, "波特率", _cmbHeatPumpBaud);
-            AddHeatPumpField(bar, "校验", _cmbHeatPumpParity);
-            AddHeatPumpField(bar, "停止位", _cmbHeatPumpStopBits);
-            AddHeatPumpField(bar, "起始站号", _nudHeatPumpScanStart);
-            AddHeatPumpField(bar, "结束站号", _nudHeatPumpScanEnd);
-            bar.Controls.Add(_btnHeatPumpConnect);
-            bar.Controls.Add(_btnHeatPumpDisconnect);
-            bar.Controls.Add(_btnHeatPumpScan);
+            // 六个字段 + 一组按钮：按钮打包成一个条目，窗口窄时三个按钮一起换行，
+            // 不会出现"连接热泵/断开热泵"留在上一行、"扫描线控器"孤零零掉下去。
+            UiStyle.RebuildToolbar(
+                bar,
+                UiStyle.Field("端口", _cmbHeatPumpPort),
+                UiStyle.Field("波特率", _cmbHeatPumpBaud),
+                UiStyle.Field("校验", _cmbHeatPumpParity),
+                UiStyle.Field("停止位", _cmbHeatPumpStopBits),
+                UiStyle.Field("起始站号", _nudHeatPumpScanStart),
+                UiStyle.Field("结束站号", _nudHeatPumpScanEnd),
+                UiStyle.Cell(_btnHeatPumpConnect, _btnHeatPumpDisconnect, _btnHeatPumpScan));
             return bar;
         }
 
@@ -357,7 +447,7 @@ namespace MeterAcquisition
             {
                 DropDownStyle = ComboBoxStyle.DropDownList,
                 Width = width,
-                Margin = new Padding(4)
+                Font = UiStyle.BodyFont
             };
 
             if (values != null)
@@ -374,23 +464,9 @@ namespace MeterAcquisition
             {
                 Minimum = 1,
                 Maximum = 247,
-                Width = 64,
-                Margin = new Padding(4)
+                Width = 60,
+                Font = UiStyle.BodyFont
             };
-        }
-
-        private static void AddHeatPumpField(FlowLayoutPanel bar, string title, Control control)
-        {
-            var field = new FlowLayoutPanel
-            {
-                AutoSize = true,
-                WrapContents = false,
-                Margin = new Padding(0, 0, 8, 0),
-                Padding = new Padding(0)
-            };
-            field.Controls.Add(new Label { Text = title, AutoSize = true, Margin = new Padding(0, 8, 2, 0) });
-            field.Controls.Add(control);
-            bar.Controls.Add(field);
         }
 
         private void RefreshHeatPumpPorts(bool preserveSelection)
@@ -454,10 +530,7 @@ namespace MeterAcquisition
             var panel = new FlowLayoutPanel
             {
                 Dock = DockStyle.Top,
-                AutoSize = true,
-                WrapContents = true,
                 Margin = new Padding(0, 0, 0, 12),
-                Padding = new Padding(8),
                 BackColor = Color.FromArgb(246, 248, 250)
             };
 
@@ -465,14 +538,14 @@ namespace MeterAcquisition
             {
                 AutoSize = true,
                 Text = "已选择 0 个模块 / 0 个控制器",
-                Margin = new Padding(0, 8, 12, 0)
+                Font = UiStyle.BodyFont
             };
             var runMode = new ComboBox
             {
                 DropDownStyle = ComboBoxStyle.DropDownList,
                 Width = 84,
                 Enabled = false,
-                Margin = new Padding(4)
+                Font = UiStyle.BodyFont
             };
             runMode.Items.AddRange(new object[] { "制热", "制冷", "自动" });
             var targetTemperature = new NumericUpDown
@@ -483,28 +556,31 @@ namespace MeterAcquisition
                 Increment = 0.5M,
                 Width = 70,
                 Enabled = false,
-                Margin = new Padding(4)
+                Font = UiStyle.BodyFont
             };
-            var applyButton = new Button { Text = "应用控制", AutoSize = true, Enabled = false, Margin = new Padding(8, 4, 4, 4) };
-            var clearFaultButton = new Button { Text = "清故障", AutoSize = true, Enabled = false, Margin = new Padding(4) };
+            var applyButton = UiStyle.CreateButton("应用控制");
+            applyButton.Enabled = false;
+            var clearFaultButton = UiStyle.CreateButton("清故障");
+            clearFaultButton.Enabled = false;
             const string writeDisabledReason = "控制写入尚未启用：待确认设备寄存器语义、运行联锁和现场操作流程。";
             foreach (Control control in new Control[] { runMode, targetTemperature, applyButton, clearFaultButton })
             {
                 _heatPumpToolTip.SetToolTip(control, writeDisabledReason);
             }
 
-            panel.Controls.Add(_lblHeatPumpSelectionSummary);
-            AddHeatPumpField(panel, "运行模式", runMode);
-            AddHeatPumpField(panel, "目标温度", targetTemperature);
-            panel.Controls.Add(applyButton);
-            panel.Controls.Add(clearFaultButton);
-            panel.Controls.Add(new Label
-            {
-                AutoSize = true,
-                Text = writeDisabledReason,
-                ForeColor = Color.DimGray,
-                Margin = new Padding(8, 8, 0, 0)
-            });
+            UiStyle.RebuildToolbar(
+                panel,
+                UiStyle.Cell(_lblHeatPumpSelectionSummary),
+                UiStyle.Field("运行模式", runMode),
+                UiStyle.Field("目标温度", targetTemperature),
+                UiStyle.Cell(applyButton, clearFaultButton),
+                UiStyle.Cell(new Label
+                {
+                    AutoSize = true,
+                    Text = writeDisabledReason,
+                    ForeColor = Color.DimGray,
+                    Font = UiStyle.BodyFont
+                }));
             return panel;
         }
 
@@ -977,28 +1053,26 @@ namespace MeterAcquisition
                 AutoEllipsis = true,
                 TextAlign = ContentAlignment.MiddleLeft,
                 Margin = new Padding(0),
-                Font = new Font("微软雅黑", 10.5F, FontStyle.Bold, GraphicsUnit.Point, 134),
+                Font = UiStyle.CardTitleFont,
                 ForeColor = Color.FromArgb(48, 48, 48)
             };
-            var editControllerButton = new Button
+            // 卡片/分组标题栏里的按钮走紧凑档（76×26），不跟工具条按钮抢空间；
+            // 尺寸只有"标准/紧凑"两档，不再每处自己写 92×26、82×26、56×26。
+            var editControllerButton = UiStyle.ApplyCompact(new Button
             {
                 Text = "配置控制器",
-                AutoSize = true,
                 Anchor = AnchorStyles.Right,
-                Margin = new Padding(8, 0, 0, 0),
-                MinimumSize = new Size(92, 26),
+                Margin = new Padding(UiStyle.Gap, 0, 0, 0),
                 Enabled = group.Controller != null
-            };
+            });
             editControllerButton.Click += (sender, e) => EditHeatPumpController(group.Controller);
-            var editGroupButton = new Button
+            var editGroupButton = UiStyle.ApplyCompact(new Button
             {
                 Text = "编辑分组",
-                AutoSize = true,
                 Anchor = AnchorStyles.Right,
-                Margin = new Padding(8, 0, 0, 0),
-                MinimumSize = new Size(82, 26),
+                Margin = new Padding(UiStyle.Gap, 0, 0, 0),
                 Enabled = group.Controller != null && group.Controller.Modules.Count > 0
-            };
+            });
             editGroupButton.Click += (sender, e) => EditHeatPumpModuleGroups(group.Controller);
             titleBar.Controls.Add(titleLabel, 0, 0);
             titleBar.Controls.Add(editGroupButton, 1, 0);
@@ -1054,15 +1128,13 @@ namespace MeterAcquisition
                 AccessibleName = "选择模块"
             };
             selection.CheckedChanged += (sender, e) => SetHeatPumpModuleSelected(cardModel.Module, selection.Checked);
-            var editModuleButton = new Button
+            var editModuleButton = UiStyle.ApplyCompact(new Button
             {
                 Text = "配置",
-                AutoSize = true,
                 Anchor = AnchorStyles.Right,
-                Margin = new Padding(8, 0, 0, 0),
-                MinimumSize = new Size(56, 26),
+                Margin = new Padding(UiStyle.Gap, 0, 0, 0),
                 Enabled = isSelectable
-            };
+            });
             editModuleButton.Click += (sender, e) => EditHeatPumpModule(cardModel.Module);
 
             var moduleLabel = new Label
@@ -1072,7 +1144,7 @@ namespace MeterAcquisition
                 AutoEllipsis = true,
                 TextAlign = ContentAlignment.MiddleLeft,
                 Margin = new Padding(0),
-                Font = new Font("微软雅黑", 10.5F, FontStyle.Bold, GraphicsUnit.Point, 134),
+                Font = UiStyle.CardTitleFont,
                 ForeColor = Color.FromArgb(32, 64, 96)
             };
 
@@ -1474,6 +1546,11 @@ namespace MeterAcquisition
             finally
             {
                 ToggleQuickControls(true);
+
+                // P4-11：ToggleQuickControls(true) 会把两个翻页按钮一律置为可用，
+                // 覆盖掉上面 UpdateQuickPagingState() 刚算出来的"第 1 页禁用上一页 / 最后一页禁用下一页"，
+                // 于是按钮看起来能点、点了却没有反应。这里补一次状态刷新。
+                UpdateQuickPagingState();
             }
         }
 
@@ -1984,13 +2061,7 @@ namespace MeterAcquisition
                 RebuildDashboardPanels();
                 ResizeDashboardPanels();
                 UpdateAllCardLabels();
-                try
-                {
-                    PublishBoxRegistryAsync(GetOrCreateDashboardBox(), "scan", ThreadingCancellationToken.None).GetAwaiter().GetResult();
-                }
-                catch
-                {
-                }
+                _ = RunGuardedAsync("仪表盘档案同步", () => PublishBoxRegistryAsync(GetOrCreateDashboardBox(), "scan", ThreadingCancellationToken.None));
                 lblSecondStatusDashboard.Text = message;
                 lblSecondStatusDashboard.ForeColor = Color.Red;
             }
@@ -2105,8 +2176,15 @@ namespace MeterAcquisition
             finally
             {
                 btnAddMeter.Enabled = true;
-                btnSecondConnect.Enabled = true;
                 btnAutoScanDashboard.Enabled = true;
+
+                // P4-10：这里原来无条件把 btnSecondConnect 置为可用，
+                // 而扫描期间该串口通常本来就是"已连接"状态（扫描前刚把它置灰，见本方法开头）。
+                // 扫描一结束"连接"又变可点，用户再点会走 Connect() 里的 Close()+Open()，
+                // 把正在跑的采集打断并丢掉本轮数据。这里只按真实状态恢复按钮，
+                // 不调用 UpdateSecondConnectionUI —— 它的未连接分支会清空仪表盘。
+                btnSecondConnect.Enabled = !_modbusService2.IsConnected;
+                btnSecondDisconnect.Enabled = _modbusService2.IsConnected;
             }
         }
 
@@ -2201,15 +2279,7 @@ namespace MeterAcquisition
             var meter = _meterManager.AddMeterToBox(toolbarBox, "MAIN-" + slaveAddress, "外串 " + slaveAddress, toolbarBox.Name, slaveAddress);
             meter.IsToolbar = true;
 
-            try
-            {
-                PublishBoxRegistryAsync(toolbarBox, "replace", ThreadingCancellationToken.None).GetAwaiter().GetResult();
-            }
-            catch (Exception ex)
-            {
-                lblStatus.Text = "档案同步失败: " + ex.Message;
-                lblStatus.ForeColor = Color.OrangeRed;
-            }
+            _ = RunGuardedAsync("档案同步", () => PublishBoxRegistryAsync(toolbarBox, "replace", ThreadingCancellationToken.None));
         }
 
         private void ClearDashboardMeters()
@@ -2490,9 +2560,32 @@ namespace MeterAcquisition
             {
                 var cb = (ComboBox)s;
                 var m = (MeterInfo)cb.Tag;
-                if (cb.SelectedItem != null)
+                if (cb.SelectedItem == null)
                 {
-                    m.SlaveAddress = (byte)(int)cb.SelectedItem;
+                    return;
+                }
+
+                byte newAddress = (byte)(int)cb.SelectedItem;
+                if (m.SlaveAddress == newAddress)
+                {
+                    return;
+                }
+
+                byte oldAddress = m.SlaveAddress;
+                m.SlaveAddress = newAddress;
+
+                // P4-12：改完只动内存里的对象是不够的 —— 平台侧 meter.slave_address 仍是旧值，
+                // 历史与告警会按旧地址归属，上位机重启/刷新后这次修改也会丢（卡片读数跳回旧表）。
+                // 因此立即把该卡所属箱的档案重新发布一次，并留审计记录。
+                var ownerBox = _meterManager.Boxes.FirstOrDefault(b => b.Meters.Contains(m));
+                if (ownerBox != null)
+                {
+                    AppLogger.Audit(
+                        "修改从站地址",
+                        m.Name,
+                        true,
+                        "箱 " + ownerBox.Name + "，从站 " + oldAddress + " → " + newAddress);
+                    _ = RunGuardedAsync("档案同步", () => PublishBoxRegistryAsync(ownerBox, "scan", ThreadingCancellationToken.None));
                 }
             };
             header.Controls.Add(cmbId, 2, 0);
@@ -2596,18 +2689,14 @@ namespace MeterAcquisition
 
             if (!meter.IsToolbar)
             {
-                var btnDelete = new Button
+                var btnDelete = UiStyle.ApplyCompact(new Button
                 {
                     Text = "删除",
-                    AutoSize = true,
-                    AutoSizeMode = AutoSizeMode.GrowAndShrink,
-                    MinimumSize = new Size(58, 28),
-                    Font = new Font("微软雅黑", 8),
                     ForeColor = Color.Red,
                     Tag = meter,
-                    Margin = new Padding(8, 0, 0, 0),
+                    Margin = new Padding(UiStyle.Gap, 0, 0, 0),
                     Anchor = AnchorStyles.Right,
-                };
+                });
                 btnDelete.Click += DeleteMeterCard_Click;
                 bottomRow.Controls.Add(btnDelete, 1, 0);
             }
@@ -2696,6 +2785,7 @@ namespace MeterAcquisition
                 }
 
                 await PublishAllMetersAsync(pollResults, rtData, enData, qlData, readRealTime, readEnergy, readQuality);
+                _effectiveOfflineTimeoutSeconds = GetEffectiveOfflineTimeoutSeconds();
                 UpdateAllCardLabels();
             }
             catch (ObjectDisposedException ex)
@@ -3150,6 +3240,16 @@ namespace MeterAcquisition
             return DateTimeOffset.UtcNow.ToOffset(TimeSpan.FromHours(8));
         }
 
+        /// <summary>
+        /// 计算本轮生效的掉线判定阈值：配置值与"一轮采集预算"取大者。
+        /// 预算按每台表 2 秒（每轮 3 次读、单次超时上限 500ms，另留余量）。
+        /// </summary>
+        private int GetEffectiveOfflineTimeoutSeconds()
+        {
+            int meterCount = _meterManager.AllMeters.Count();
+            return Math.Max(_offlineTimeoutSeconds, meterCount * 2);
+        }
+
         internal (string Text, Color Color, bool IsOffline) GetMeterDisplayStatus(MeterInfo meter)
         {
             if (meter == null)
@@ -3160,7 +3260,7 @@ namespace MeterAcquisition
             if (meter.LastSuccessfulReadTime.HasValue)
             {
                 var elapsed = DateTimeOffset.UtcNow - meter.LastSuccessfulReadTime.Value;
-                if (elapsed.TotalSeconds > _offlineTimeoutSeconds)
+                if (elapsed.TotalSeconds > _effectiveOfflineTimeoutSeconds)
                 {
                     return ("● 设备掉线", Color.OrangeRed, true);
                 }
@@ -3543,13 +3643,7 @@ namespace MeterAcquisition
                 _meterManager.ClearData();
                 RebuildDashboardPanels();
                 UpdateAllCardLabels();
-                try
-                {
-                    PublishBoxRegistryAsync(toolbarBox, "scan", ThreadingCancellationToken.None).GetAwaiter().GetResult();
-                }
-                catch
-                {
-                }
+                _ = RunGuardedAsync("断连档案同步", () => PublishBoxRegistryAsync(toolbarBox, "scan", ThreadingCancellationToken.None));
                 _mqttPublishErrorActive = false;
                 _mqttPublishErrorShown = false;
                 lblStatus.Text = message;
@@ -3748,7 +3842,7 @@ namespace MeterAcquisition
                 SlaveAddress = newAddress,
                 BaudRate = newBaudRate,
                 Parity = ParseParityFromString(cmbParamParity.SelectedItem.ToString()),
-                StopBits = _meterCommunicationConfig.StopBits,
+                StopBits = ParseStopBitsFromString(cmbParamParity.SelectedItem.ToString()),
                 DataBits = _meterCommunicationConfig.DataBits
             };
 
@@ -3759,14 +3853,15 @@ namespace MeterAcquisition
                 "  目标设备：{0}\n" +
                 "  从站地址：{1}  →  {2}\n" +
                 "  波特率：  {3}  →  {4}\n" +
-                "  校验位：  {5}  →  {6}（停止位 {7}）\n\n" +
+                "  校验位：  {5}  →  {6}（停止位 {7}，即下拉项 {8}）\n\n" +
                 "写入后电表会按新参数通讯，上位机需要用相同参数重新连接。\n" +
                 "如果参数填错，电表将无法再被访问，只能到现场恢复。\n\n" +
                 "确认写入吗？",
                 target,
                 _legacyMeterDataService.SlaveAddress, config.SlaveAddress,
                 _meterCommunicationConfig.BaudRate, config.BaudRate,
-                _meterCommunicationConfig.Parity, config.Parity, config.StopBits);
+                _meterCommunicationConfig.Parity, config.Parity, config.StopBits,
+                cmbParamParity.SelectedItem);
 
             if (MessageBox.Show(summary, "确认写入通讯参数", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes)
             {
@@ -3965,6 +4060,21 @@ namespace MeterAcquisition
                 case "8E2": return Parity.Even;
                 default: return Parity.Even;
             }
+        }
+
+        /// <summary>
+        /// 从 "8N2" 这类下拉项解析停止位 —— 选项的最后一位就是停止位
+        /// （8N2 / 8O1 / 8E1 / 8N1 / 8O2 / 8E2）。
+        ///
+        /// P4-2：改造前写参数时停止位直接取 `_meterCommunicationConfig.StopBits`（来自 App.config），
+        /// 用户在界面上选的停止位被完全丢弃：选 8N2 实际写入的是 8N1，电表随后以另一种帧格式通讯，
+        /// 结果与 P0-3 修掉的校验位问题完全一样 —— 表从总线上消失，只能到现场逐台恢复。
+        /// </summary>
+        private static StopBits ParseStopBitsFromString(string option)
+        {
+            return !string.IsNullOrEmpty(option) && option.EndsWith("2", StringComparison.Ordinal)
+                ? StopBits.Two
+                : StopBits.One;
         }
 
         #endregion

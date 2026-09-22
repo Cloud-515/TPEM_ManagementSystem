@@ -59,10 +59,18 @@ namespace MeterAcquisition
         }
 
         /// <summary>
-        /// 连接串口
+        /// 连接串口。
+        ///
+        /// 注意：串口状态事件**不能在 _lockObj 内触发**。订阅者（MainForm.UpdateConnectionUI）
+        /// 会在"已连接"分支里同步发布档案消息，而 MQTT 在 Broker 不可达时默认要等 100 秒才超时 ——
+        /// 事件在锁内触发会把串口锁交给 UI 线程整整 100 秒，期间所有轮询都堵在 ReadHoldingRegisters 上，
+        /// 表现为界面"未响应"且整段数据缺失。因此先在锁内完成开/关串口，出锁后再通知订阅者。
         /// </summary>
         public bool Connect(string portName)
         {
+            bool opened = false;
+            Exception error = null;
+
             lock (_lockObj)
             {
                 try
@@ -78,33 +86,50 @@ namespace MeterAcquisition
                         string.Format(
                             "已打开 {0}: {1},{2},{3},{4}",
                             portName, Config.BaudRate, Config.Parity, Config.DataBits, Config.StopBits));
-                    OnConnectionStateChanged(true, portName, "连接成功");
-                    return true;
+                    opened = true;
                 }
                 catch (Exception ex)
                 {
-                    AppLogger.Error("Serial", "打开串口 " + portName + " 失败。", ex);
-                    OnConnectionStateChanged(false, portName, $"连接失败: {ex.Message}");
-                    OnCommunicationError(ex);
-                    return false;
+                    error = ex;
                 }
             }
+
+            if (opened)
+            {
+                OnConnectionStateChanged(true, portName, "连接成功");
+                return true;
+            }
+
+            AppLogger.Error("Serial", "打开串口 " + portName + " 失败。", error);
+            OnConnectionStateChanged(false, portName, "连接失败: " + (error == null ? "未知原因" : error.Message));
+            if (error != null)
+            {
+                OnCommunicationError(error);
+            }
+
+            return false;
         }
 
         /// <summary>
-        /// 断开连接
+        /// 断开连接。事件同样在锁外触发，原因见 Connect。
         /// </summary>
         public void Disconnect()
         {
+            string portName = null;
+
             lock (_lockObj)
             {
                 if (_serialPort?.IsOpen == true)
                 {
-                    string portName = _serialPort.PortName;
+                    portName = _serialPort.PortName;
                     _serialPort.Close();
-                    AppLogger.Info("Serial", "已关闭 " + portName + "。");
-                    OnConnectionStateChanged(false, portName, "已断开");
                 }
+            }
+
+            if (portName != null)
+            {
+                AppLogger.Info("Serial", "已关闭 " + portName + "。");
+                OnConnectionStateChanged(false, portName, "已断开");
             }
         }
 
@@ -299,12 +324,13 @@ namespace MeterAcquisition
 
                     byte[] response = ReadResponse(8);
 
-                    if (response != null && Crc16Helper.Validate(response, response.Length))
-                    {
-                        return response[1] == 0x10;
-                    }
-
-                    return false;
+                    return ValidateWriteResponse(
+                        response,
+                        slaveAddress,
+                        0x10,
+                        startAddress,
+                        (ushort)(data.Length / 2),
+                        "写从站 " + slaveAddress + " 寄存器 0x" + startAddress.ToString("X4"));
                 }
                 catch (InvalidOperationException)
                 {
@@ -336,12 +362,13 @@ namespace MeterAcquisition
 
                     byte[] response = ReadResponse(8);
 
-                    if (response != null && Crc16Helper.Validate(response, response.Length))
-                    {
-                        return response[1] == 0x05;
-                    }
-
-                    return false;
+                    return ValidateWriteResponse(
+                        response,
+                        slaveAddress,
+                        0x05,
+                        address,
+                        value ? (ushort)0xFF00 : (ushort)0x0000,
+                        "遥控从站 " + slaveAddress + " 线圈 0x" + address.ToString("X4"));
                 }
                 catch (InvalidOperationException)
                 {
@@ -353,6 +380,90 @@ namespace MeterAcquisition
                     return false;
                 }
             }
+        }
+
+        /// <summary>
+        /// 逐项校验写响应。
+        ///
+        /// 改造前只判 CRC 与功能码，且 CRC 按"实收长度"计算，两个方向都会出错：
+        ///  · 不校验从站地址 —— RS485 共享总线上收到别的从站的回包时会被当成本次写入成功，
+        ///    对 DO1/DO2 分合闸就是"操作者以为断路器已经动作了"；
+        ///  · 实收超过 8 字节（廉价 USB-RS485 的 TX 回显、上次超时残留的尾字节）时，
+        ///    CRC 覆盖了多余的字节必然失败 —— 明明写成功却报"设备未确认"，
+        ///    而界面提示"命令可能已到达…请重试"，会诱导操作者重复下发分/合闸。
+        ///
+        /// 现在在缓冲区里按 8 字节定长找一帧：从站地址、功能码、地址与写入值回显、CRC 全部相符才算成功，
+        /// 因此既不会采信别人的回包，也不会因为多读了几个字节就把好帧判成坏帧。
+        /// </summary>
+        private bool ValidateWriteResponse(byte[] response, byte slaveAddress, byte functionCode, ushort address, ushort value, string where)
+        {
+            if (response == null || response.Length < 8)
+            {
+                Interlocked.Increment(ref _timeoutCount);
+                AppLogger.Debug("Modbus", where + " 无写响应或响应过短（" + (response == null ? 0 : response.Length) + " 字节）。");
+                return false;
+            }
+
+            bool sawForeignFrame = false;
+
+            for (int offset = 0; offset + 8 <= response.Length; offset++)
+            {
+                if (response[offset] != slaveAddress)
+                {
+                    sawForeignFrame = true;
+                    continue;
+                }
+
+                // 异常响应：功能码最高位置位，第 3 字节是异常码。
+                if ((response[offset + 1] & 0x80) != 0)
+                {
+                    Interlocked.Increment(ref _exceptionCount);
+                    AppLogger.Warn(
+                        "Modbus",
+                        where + " 返回 Modbus 异常码 0x" + response[offset + 2].ToString("X2") +
+                        "（功能码 0x" + response[offset + 1].ToString("X2") + "），本次写入未生效。");
+                    return false;
+                }
+
+                if (response[offset + 1] != functionCode)
+                {
+                    sawForeignFrame = true;
+                    continue;
+                }
+
+                if (!Crc16Helper.Validate(response, offset, 8))
+                {
+                    continue;
+                }
+
+                ushort echoedAddress = (ushort)((response[offset + 2] << 8) | response[offset + 3]);
+                ushort echoedValue = (ushort)((response[offset + 4] << 8) | response[offset + 5]);
+                if (echoedAddress != address || echoedValue != value)
+                {
+                    Interlocked.Increment(ref _mismatchCount);
+                    AppLogger.Warn(
+                        "Modbus",
+                        where + " 写响应回显不符（地址 0x" + echoedAddress.ToString("X4") +
+                        "、值 0x" + echoedValue.ToString("X4") + "），已丢弃。");
+                    return false;
+                }
+
+                Interlocked.Increment(ref _successCount);
+                return true;
+            }
+
+            if (sawForeignFrame)
+            {
+                Interlocked.Increment(ref _mismatchCount);
+                AppLogger.Warn("Modbus", where + " 缓冲区里没有本从站的合法写响应，已丢弃（总线串话或帧未对齐）。");
+            }
+            else
+            {
+                Interlocked.Increment(ref _crcErrorCount);
+                AppLogger.Warn("Modbus", where + " 写响应 CRC 校验失败，已丢弃（线路干扰或帧未对齐）。");
+            }
+
+            return false;
         }
 
         /// <summary>

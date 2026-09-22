@@ -135,13 +135,27 @@ namespace MeterIngestionWorker
                 {
                     AppLogger.Error("Lifecycle", "服务异常退出。", ex);
                     exitCode = 1;
+
+                    // 异常路径同样要取消：离线监控与心跳都以 !IsCancellationRequested 作为退出条件，
+                    // 不取消就会留下"进程活着、既不再订阅也不退出"的状态，只能手工杀掉。
+                    cts.Cancel();
                 }
                 finally
                 {
                     MessageQueue.CompleteAdding();
                 }
 
-                await Task.WhenAll(workers.Concat(new[] { offlineMonitor, heartbeat })).ConfigureAwait(false);
+                try
+                {
+                    await Task.WhenAll(workers.Concat(new[] { offlineMonitor, heartbeat })).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    // 停止信号下后台循环以取消异常结束，属正常收尾。
+                    // 原实现没有这层捕获：Ctrl+C 会让 OperationCanceledException 冒到 Main 之外，
+                    // 走 AppDomain 未处理异常处理器记为"服务崩溃"、退出码非 0（作为服务托管时会被判定为崩溃），
+                    // 并且下面的累计统计与 AppLogger.Shutdown() 一并被跳过。
+                }
                 AppLogger.Info(
                     "Lifecycle",
                     string.Format(
@@ -1180,8 +1194,15 @@ WHERE id = @id;";
                     }
                 }
             }
-            catch
+            catch (Exception ex)
             {
+                // 这里原先是个空 catch：数据库不可用时更新失败没人知道，
+                // mqtt_message_log 那一行会永远停在 pending，排障时状态自相矛盾
+                //（记录说"处理中"，实际早就失败了）。至少留下一行日志。
+                AppLogger.Warn(
+                    "Ingest",
+                    "标记消息处理失败时自身失败（id=" + logId + "），该行可能仍停在 pending 状态。",
+                    ex);
             }
         }
 
@@ -1744,8 +1765,36 @@ LIMIT 1;";
                 SetAlarmActive(connection, transaction, meterId, hit, telemetry.CollectTime);
             }
 
+            // 去抖的口径是"**连续**命中 debounce_count 次"，所以本轮未命中的项必须清零。
+            // 原实现只在"已激活且越过滞回带"时移除计数，未命中且当前无告警时既不归零也不递减，
+            // 计数器的实际语义变成"任意时间跨度内命中的总次数" —— 阈值附近每 10 分钟蹭一次越限，
+            // 50 分钟后照样置位一条告警，P1-6 想消除的误报只被削弱、没有消除。
+            ResetDebounceCountersOfUnhitItems(meterId, thresholds, hitByCode);
+
             // 对"本次未命中"的已激活告警，检查是否满足滞回恢复条件。
             ResolveRecoveredAlarms(connection, transaction, meterId, thresholds, sample, hitByCode, telemetry.CollectTime);
+        }
+
+        /// <summary>
+        /// 把本表"本轮未命中"的去抖计数清零。
+        /// 只遍历阈值表里已绑定的告警代码（十来个），而不是遍历整个字典 ——
+        /// 后者要按"所有表 × 所有告警码"扫描，表一多就成了每条消息都要付的开销。
+        /// </summary>
+        private static void ResetDebounceCountersOfUnhitItems(
+            long meterId,
+            ThresholdSet thresholds,
+            Dictionary<string, ThresholdHit> hitByCode)
+        {
+            foreach (var binding in MeterQualityEvaluator.EnumerateAlarmCodes(thresholds, MeterQualityEvaluator.AllMetricCodes))
+            {
+                if (hitByCode.ContainsKey(binding.AlarmCode))
+                {
+                    continue;
+                }
+
+                int removed;
+                AlarmDebounce.TryRemove(meterId + "|" + binding.AlarmCode, out removed);
+            }
         }
 
         /// <summary>
@@ -2166,8 +2215,18 @@ VALUES
 (@meter_id, @is_online, @last_collect_time, @last_publish_time, @last_error_time, @last_error_message, @status_code)
 ON CONFLICT (meter_id) DO UPDATE SET
 is_online = EXCLUDED.is_online,
-last_collect_time = COALESCE(EXCLUDED.last_collect_time, meter_status.last_collect_time),
-last_publish_time = COALESCE(EXCLUDED.last_publish_time, meter_status.last_publish_time),
+last_collect_time = CASE
+    WHEN EXCLUDED.last_collect_time IS NULL THEN meter_status.last_collect_time
+    WHEN meter_status.last_collect_time IS NULL THEN EXCLUDED.last_collect_time
+    WHEN EXCLUDED.last_collect_time >= meter_status.last_collect_time THEN EXCLUDED.last_collect_time
+    ELSE meter_status.last_collect_time
+END,
+last_publish_time = CASE
+    WHEN EXCLUDED.last_publish_time IS NULL THEN meter_status.last_publish_time
+    WHEN meter_status.last_publish_time IS NULL THEN EXCLUDED.last_publish_time
+    WHEN EXCLUDED.last_publish_time >= meter_status.last_publish_time THEN EXCLUDED.last_publish_time
+    ELSE meter_status.last_publish_time
+END,
 last_error_time = COALESCE(EXCLUDED.last_error_time, meter_status.last_error_time),
 last_error_message = EXCLUDED.last_error_message,
 status_code = EXCLUDED.status_code,
@@ -2194,11 +2253,15 @@ END;";
 
         private static void UpdateMeterLastSeen(NpgsqlConnection connection, NpgsqlTransaction transaction, long meterId, DateTimeOffset collectTime)
         {
+            // 与三张 meter_*_latest 表同样的单调守卫：迟到的旧消息不能把 last_seen_time 往回拨。
+            // 没有这个守卫时，一条乱序消息会把时间戳回退，离线监控随即在 15 秒后
+            // 把通讯正常的表标成离线并写一条 critical 级 alarm_event，下一条消息又恢复 —— 产生短命告警对。
             const string sql = @"
 UPDATE meter
 SET last_seen_time = @last_seen_time,
     updated_at = CURRENT_TIMESTAMP
-WHERE id = @id;";
+WHERE id = @id
+  AND (last_seen_time IS NULL OR last_seen_time <= @last_seen_time);";
 
             using (var command = new NpgsqlCommand(sql, connection, transaction))
             {
