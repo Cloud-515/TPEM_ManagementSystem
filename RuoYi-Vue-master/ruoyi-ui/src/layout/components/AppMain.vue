@@ -1,5 +1,10 @@
 <template>
   <section class="app-main">
+    <div v-if="simulationEnabled" class="simulation-banner">
+      <i class="el-icon-warning-outline" />
+      当前为<strong>模拟数据模式</strong>：下面显示的是内置演示数据，不是现场真实采集的读数。
+      关闭方式：个人中心 →「电表模拟数据」开关。
+    </div>
     <transition name="fade-transform" mode="out-in">
       <keep-alive :include="cachedViews">
         <router-view v-if="!$route.meta.link" :key="key" />
@@ -13,10 +18,19 @@
 <script>
 import copyright from "./Copyright/index"
 import iframeToggle from "./IframeToggle/index"
+import { isMeterSimulationEnabled } from "@/utils/meter-simulation"
 
 export default {
   name: 'AppMain',
   components: { iframeToggle, copyright },
+  data() {
+    return {
+      // 开关存在 localStorage 里，不是响应式的，所以进入每个页面时重读一次。
+      // 原实现只在开启后 reload 一次页面，界面上没有任何痕迹 ——
+      // 开着开关看首页，很容易把演示读数当成现场数据。
+      simulationEnabled: isMeterSimulationEnabled()
+    }
+  },
   computed: {
     cachedViews() {
       return this.$store.state.tagsView.cachedViews
@@ -28,6 +42,7 @@ export default {
   watch: {
     $route() {
       this.addIframe()
+      this.simulationEnabled = isMeterSimulationEnabled()
     }
   },
   mounted() {
@@ -45,6 +60,26 @@ export default {
 </script>
 
 <style lang="scss" scoped>
+.simulation-banner {
+  position: sticky;
+  top: 0;
+  z-index: 2001;
+  padding: 9px 16px;
+  background: #fdf6ec;
+  border-bottom: 1px solid #f5dab1;
+  color: #b88230;
+  font-size: 13px;
+  line-height: 1.5;
+
+  i {
+    margin-right: 6px;
+  }
+
+  strong {
+    margin: 0 2px;
+  }
+}
+
 .app-main {
   /* 50= navbar  50  */
   min-height: calc(100vh - 50px);

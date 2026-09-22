@@ -3,6 +3,7 @@ export const meterStatusMeta = {
   PF_LOW: { label: '功率因数低', type: 'warning' },
   VOLTAGE_BAD: { label: '电压异常', type: 'warning' },
   FAULT: { label: '通信故障', type: 'danger' },
+  ABNORMAL: { label: '数值异常', type: 'danger' },
   NODATA: { label: '无数据', type: 'info' },
   WAITING: { label: '等待采集', type: 'info' }
 }

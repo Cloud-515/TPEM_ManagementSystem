@@ -359,6 +359,7 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         INNER JOIN meter m ON m.id = qh.meter_id
         LEFT JOIN distribution_box b ON b.id = m.box_id
         LEFT JOIN site s ON s.id = m.site_id
+        LEFT JOIN meter_status ms ON ms.meter_id = m.id
         <include refid="BaseWhereClause" />
         <if test="beginTime != null">
             AND qh.collect_time <![CDATA[>=]]> #{beginTime}

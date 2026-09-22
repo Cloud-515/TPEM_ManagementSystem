@@ -106,7 +106,8 @@ export default {
       if (this.meterId) query.meterId = this.meterId
       else delete query.meterId
       this.$router.replace({ name: 'MeterEnergy', query })
-      this.loadAnalysis()
+      // 不再在这里调 loadAnalysis()：$route.query.meterId 的 watch 会做同一件事，
+      // 两个都保留等于每切一次设备就发两次分析请求（结果相同，只是白跑一趟并让 loading 抖动）。
     },
     loadMeters() {
       listMeterCards().then(response => {

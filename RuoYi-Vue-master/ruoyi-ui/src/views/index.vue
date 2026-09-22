@@ -127,6 +127,7 @@ const statusMeta = [
   { code: 'PF_LOW', label: '功率因数低', color: '#d98b1d', tag: 'warning' },
   { code: 'VOLTAGE_BAD', label: '电压异常', color: '#e06c3b', tag: 'warning' },
   { code: 'FAULT', label: '通信故障', color: '#c94747', tag: 'danger' },
+  { code: 'ABNORMAL', label: '数值异常', color: '#c94747', tag: 'danger' },
   { code: 'NODATA', label: '无数据', color: '#77879a', tag: 'info' },
   { code: 'WAITING', label: '等待采集', color: '#9aabbc', tag: 'info' }
 ]
@@ -171,7 +172,7 @@ export default {
       return this.meters.filter(item => Number.isFinite(Number(item.activePowerKw)) && Number(item.activePowerKw) >= 0).sort((a, b) => Number(b.activePowerKw) - Number(a.activePowerKw)).slice(0, 10)
     },
     exceptions() {
-      const severity = { FAULT: 0, VOLTAGE_BAD: 1, PF_LOW: 2, NODATA: 3, WAITING: 4 }
+      const severity = { FAULT: 0, ABNORMAL: 1, VOLTAGE_BAD: 2, PF_LOW: 3, NODATA: 4, WAITING: 5 }
       return this.meters.filter(item => item.statusCode !== 'OK').sort((a, b) => severity[a.statusCode] - severity[b.statusCode])
     },
     visibleExceptions() {
@@ -185,13 +186,31 @@ export default {
   mounted() {
     this.initCharts()
     this.refreshDashboard()
-    this.refreshTimer = setInterval(this.loadSnapshot, 15000)
+    this.startRefreshTimer()
+  },
+  // 首页同样被 keep-alive 缓存：离开时只有 deactivated，
+  // 只在 beforeDestroy 清理定时器会让它在你已经切到别的页面后继续每 15 秒请求一次。
+  activated() {
+    this.startRefreshTimer()
+  },
+  deactivated() {
+    this.stopRefreshTimer()
   },
   beforeDestroy() {
-    clearInterval(this.refreshTimer)
+    this.stopRefreshTimer()
     ;[this.trendChart, this.loadChart, this.healthChart].forEach(chart => chart && chart.dispose())
   },
   methods: {
+    startRefreshTimer() {
+      this.stopRefreshTimer()
+      this.refreshTimer = setInterval(this.loadSnapshot, 15000)
+    },
+    stopRefreshTimer() {
+      if (this.refreshTimer) {
+        clearInterval(this.refreshTimer)
+        this.refreshTimer = null
+      }
+    },
     initCharts() {
       this.trendChart = echarts.init(this.$refs.trendChart)
       this.loadChart = echarts.init(this.$refs.loadChart)

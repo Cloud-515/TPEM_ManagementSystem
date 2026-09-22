@@ -29,6 +29,9 @@ public class GlobalExceptionHandler
 {
     private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
 
+    /** 未知异常的对外文案：细节只进日志，不进响应体。 */
+    private static final String INTERNAL_ERROR_MESSAGE = "系统内部错误，请联系管理员并提供发生时间，具体原因见服务端日志。";
+
     /**
      * 权限校验异常
      */
@@ -98,7 +101,7 @@ public class GlobalExceptionHandler
     {
         String requestURI = request.getRequestURI();
         log.error("请求地址'{}',发生未知异常.", requestURI, e);
-        return AjaxResult.error(e.getMessage());
+        return AjaxResult.error(INTERNAL_ERROR_MESSAGE);
     }
 
     /**
@@ -109,7 +112,23 @@ public class GlobalExceptionHandler
     {
         String requestURI = request.getRequestURI();
         log.error("请求地址'{}',发生系统异常.", requestURI, e);
-        return AjaxResult.error(e.getMessage());
+        return AjaxResult.error(INTERNAL_ERROR_MESSAGE);
+    }
+
+    /**
+     * 参数校验失败。
+     *
+     * 这类消息是业务代码自己写的（例如"结束时间不能晚于当前时间"），可以回给前端；
+     * 而 Runtime/Exception 两个兜底分支原来是把 e.getMessage() 原样返回的 ——
+     * SQL 报错时会把表名、列名甚至整段 SQL 带到浏览器上，既是信息泄露，
+     * 也让使用者误以为那是可以自行处理的提示。
+     */
+    @ExceptionHandler(IllegalArgumentException.class)
+    public AjaxResult handleIllegalArgumentException(IllegalArgumentException e, HttpServletRequest request)
+    {
+        String requestURI = request.getRequestURI();
+        log.warn("请求地址'{}',参数校验失败：{}", requestURI, e.getMessage());
+        return AjaxResult.error(HttpStatus.BAD_REQUEST, e.getMessage());
     }
 
     /**

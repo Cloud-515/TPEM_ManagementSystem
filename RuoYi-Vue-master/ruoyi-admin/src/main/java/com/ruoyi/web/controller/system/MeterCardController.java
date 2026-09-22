@@ -26,6 +26,9 @@ import com.ruoyi.system.service.IMeterTopologyService;
 @RequestMapping("/system/meter")
 public class MeterCardController extends BaseController
 {
+    /** 单页上限（W-10）：pageSize 由请求参数直接决定，不封顶时可以用一个请求把整张表拉进内存。 */
+    private static final int MAX_PAGE_SIZE = 200;
+
     @Autowired
     private IMeterCardService meterCardService;
 
@@ -80,13 +83,18 @@ public class MeterCardController extends BaseController
     {
         java.util.List<MeterCard> list = meterCardService.listQualityMeters(query);
         pageNum = Math.max(pageNum, 1);
-        pageSize = Math.max(pageSize, 1);
-        int fromIndex = Math.min((pageNum - 1) * pageSize, list.size());
-        int toIndex = Math.min(fromIndex + pageSize, list.size());
+        pageSize = Math.min(Math.max(pageSize, 1), MAX_PAGE_SIZE);
+
+        // 用 long 计算下标：原来 (pageNum - 1) * pageSize 是 int 乘法，
+        // ?pageNum=1000000&pageSize=1000000 会溢出成负数，subList(负数, …) 抛 IndexOutOfBoundsException，
+        // 请求方拿到的就是一个 500（并且经全局异常处理器把内部信息带出去）。
+        long fromIndex = Math.min((long)(pageNum - 1) * pageSize, list.size());
+        long toIndex = Math.min(fromIndex + pageSize, list.size());
+
         TableDataInfo result = new TableDataInfo();
         result.setCode(200);
         result.setMsg("查询成功");
-        result.setRows(list.subList(fromIndex, toIndex));
+        result.setRows(list.subList((int) fromIndex, (int) toIndex));
         result.setTotal(list.size());
         return result;
     }

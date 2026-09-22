@@ -66,7 +66,8 @@ import { formatMeterNumber } from '../components/meter-utils'
 
 const categoryInfo = {
   realtime: { title: '运行状态趋势', description: '查看设备运行参数在所选时间范围内的变化情况。' },
-  energy: { title: '累计电能趋势', description: '展示累计电能读数，帮助了解设备用电变化。' }
+  energy: { title: '累计电能趋势', description: '展示累计电能读数，帮助了解设备用电变化。' },
+  quality: { title: '电能质量趋势', description: '查看谐波、不平衡度与功率因数在所选时间范围内的变化情况。' }
 }
 
 export default {
@@ -74,7 +75,7 @@ export default {
   mixins: [resize],
   data() {
     return {
-      loading: false, trendLoading: false, optionsLoading: false, total: 0, historyList: [], trendPoints: [], meterOptions: [], selectedQuickRange: '', activeCategory: 'realtime', dateRange: [], primaryChart: null, trendRequestId: 0, trendRequestId: 0,
+      loading: false, trendLoading: false, optionsLoading: false, total: 0, historyList: [], trendPoints: [], meterOptions: [], selectedQuickRange: '', activeCategory: 'realtime', dateRange: [], primaryChart: null, trendRequestId: 0,
       queryParams: { pageNum: 1, pageSize: 20, meterId: undefined },
       pickerOptions: { disabledDate(time) { return time.getTime() > Date.now() } },
       quickRanges: [{ key: '1h', label: '近1小时', hours: 1 }, { key: '6h', label: '近6小时', hours: 6 }, { key: '24h', label: '近24小时', hours: 24 }, { key: '7d', label: '近7天', hours: 168 }, { key: '30d', label: '近30天', hours: 720 }]
@@ -83,13 +84,23 @@ export default {
   computed: {
     canQuery() { return Boolean(this.queryParams.meterId && this.isValidDateRange(this.dateRange)) },
     selectedMeter() { return this.meterOptions.find(item => String(item.meterId) === this.queryParams.meterId) },
-    trendTitle() { return categoryInfo[this.activeCategory].title },
-    trendDescription() { return categoryInfo[this.activeCategory].description },
+    trendTitle() { return (categoryInfo[this.activeCategory] || {}).title || '趋势' },
+    trendDescription() { return (categoryInfo[this.activeCategory] || {}).description || '' },
     emptyText() { return this.canQuery ? '当前条件下没有原始采集记录' : '请选择设备与时间范围后查询' }
   },
   created() { this.restoreQuery(); this.loadMeterOptions().then(() => { if (this.canQuery) this.handleQuery() }) },
   mounted() { this.primaryChart = echarts.init(this.$refs.primaryChart); this.renderTrend() },
   beforeDestroy() { if (this.primaryChart) this.primaryChart.dispose() },
+  watch: {
+    '$route.query'(query) {
+      const sameMeter = (query.meterId ? String(query.meterId) : undefined) === this.queryParams.meterId
+      const sameCategory = (query.category || 'realtime') === this.activeCategory
+      const sameRange = (query.beginTime || undefined) === this.dateRange[0] && (query.endTime || undefined) === this.dateRange[1]
+      if (sameMeter && sameCategory && sameRange) return
+      this.restoreQuery()
+      if (this.canQuery) this.handleQuery()
+    }
+  },
   methods: {
     formatMeterNumber,
     toKilowatts(value) { const number = Number(value); return Number.isFinite(number) ? number / 1000 : null },

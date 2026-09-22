@@ -21,6 +21,8 @@ import com.ruoyi.system.domain.MeterEnergyTrendPoint;
 import com.ruoyi.system.domain.MeterEnergyAnalysis;
 import com.ruoyi.system.domain.MeterEnergyRangeSummary;
 import com.ruoyi.system.domain.MeterThreshold;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import com.ruoyi.system.domain.MeterCard;
@@ -39,8 +41,21 @@ public class MeterCardServiceImpl implements IMeterCardService
     /** P1-1：判定阈值缓存有效期，与上位机 / 入库服务的 ThresholdRefreshSeconds 默认值一致。 */
     private static final long THRESHOLD_CACHE_TTL_MILLIS = 5 * 60 * 1000L;
 
+    /**
+     * W-7：读取阈值失败时的重试间隔。失败结果只缓存 30 秒而不是 5 分钟 ——
+     * 原来一次瞬时故障（或表压根不存在）会把"内置默认值"锁死整整 5 分钟，
+     * 这期间页面上的判定与采集端不一致，而界面上完全看不出来。
+     */
+    private static final long THRESHOLD_FAILURE_RETRY_MILLIS = 30 * 1000L;
+
+    private static final Logger log = LoggerFactory.getLogger(MeterCardServiceImpl.class);
+
     private volatile Map<String, Map<String, MeterThreshold>> thresholdCache = null;
     private volatile long thresholdLoadedAt = 0L;
+    private volatile long thresholdTtl = THRESHOLD_CACHE_TTL_MILLIS;
+
+    /** 只在"由成功转为失败"时打一次 warn，避免每 30 秒刷一条日志。 */
+    private volatile boolean thresholdFallbackWarned = false;
 
     @Autowired
     private MeterCardMapper meterCardMapper;
@@ -382,27 +397,47 @@ public class MeterCardServiceImpl implements IMeterCardService
         // 不再硬编码 0.85 / 198 / 242 / 5 / 8 / 2 / 3。
         Map<String, MeterThreshold> t = resolveThresholds(card);
 
-        if (isBelow(card.getPowerFactorTotal(), minOf(t, "power_factor_total", 0.85f))) risks.add("POWER_FACTOR_LOW");
+        // W-8：阈值表里把某项的 is_alarm_enabled 关掉后，网页端也必须不再判它 ——
+        // 否则运维在库里关掉一项告警，入库服务不再产生事件，页面却还在标风险，
+        // "三端同用一份阈值"就只统一了数字、没统一规则。表里没有这一行时保持原判定。
+        if (isAlarmEnabled(t, "power_factor_total")
+            && isBelow(card.getPowerFactorTotal(), minOf(t, "power_factor_total", 0.85f))) risks.add("POWER_FACTOR_LOW");
 
         float voltageMin = minOf(t, "voltage_phase", 198f);
         float voltageMax = maxOf(t, "voltage_phase", 242f);
-        if (isOutside(card.getVoltageA(), voltageMin, voltageMax)
-            || isOutside(card.getVoltageB(), voltageMin, voltageMax)
-            || isOutside(card.getVoltageC(), voltageMin, voltageMax)) risks.add("VOLTAGE_OUT_OF_RANGE");
+        if (isAlarmEnabled(t, "voltage_phase")
+            && (isOutside(card.getVoltageA(), voltageMin, voltageMax)
+                || isOutside(card.getVoltageB(), voltageMin, voltageMax)
+                || isOutside(card.getVoltageC(), voltageMin, voltageMax))) risks.add("VOLTAGE_OUT_OF_RANGE");
 
         float voltageThdMax = maxOf(t, "voltage_thd", 5f);
-        if (isAbove(card.getVoltageThdA(), voltageThdMax)
-            || isAbove(card.getVoltageThdB(), voltageThdMax)
-            || isAbove(card.getVoltageThdC(), voltageThdMax)) risks.add("VOLTAGE_THD_EXCEEDED");
+        if (isAlarmEnabled(t, "voltage_thd")
+            && (isAbove(card.getVoltageThdA(), voltageThdMax)
+                || isAbove(card.getVoltageThdB(), voltageThdMax)
+                || isAbove(card.getVoltageThdC(), voltageThdMax))) risks.add("VOLTAGE_THD_EXCEEDED");
 
         float currentThdMax = maxOf(t, "current_thd", 8f);
-        if (isAbove(card.getCurrentThdA(), currentThdMax)
-            || isAbove(card.getCurrentThdB(), currentThdMax)
-            || isAbove(card.getCurrentThdC(), currentThdMax)) risks.add("CURRENT_THD_EXCEEDED");
+        if (isAlarmEnabled(t, "current_thd")
+            && (isAbove(card.getCurrentThdA(), currentThdMax)
+                || isAbove(card.getCurrentThdB(), currentThdMax)
+                || isAbove(card.getCurrentThdC(), currentThdMax))) risks.add("CURRENT_THD_EXCEEDED");
 
-        if (isAbove(card.getVoltageUnbalance(), maxOf(t, "voltage_unbalance", 2f))) risks.add("VOLTAGE_UNBALANCE_EXCEEDED");
-        if (isAbove(card.getCurrentUnbalance(), maxOf(t, "current_unbalance", 3f))) risks.add("CURRENT_UNBALANCE_EXCEEDED");
+        if (isAlarmEnabled(t, "voltage_unbalance")
+            && isAbove(card.getVoltageUnbalance(), maxOf(t, "voltage_unbalance", 2f))) risks.add("VOLTAGE_UNBALANCE_EXCEEDED");
+        if (isAlarmEnabled(t, "current_unbalance")
+            && isAbove(card.getCurrentUnbalance(), maxOf(t, "current_unbalance", 3f))) risks.add("CURRENT_UNBALANCE_EXCEEDED");
         return risks.toArray(new String[0]);
+    }
+
+    /**
+     * 该项告警是否启用（W-8）。
+     * 语义按"阈值表里显式关掉才算关"处理：查不到阈值表时不改变原有判定，
+     * 页面不能因为读不到配置就少报风险。
+     */
+    private boolean isAlarmEnabled(Map<String, MeterThreshold> thresholds, String metricCode)
+    {
+        MeterThreshold rule = thresholds.get(metricCode);
+        return rule == null || rule.getAlarmEnabled() == null || rule.getAlarmEnabled();
     }
 
     /**
@@ -439,12 +474,13 @@ public class MeterCardServiceImpl implements IMeterCardService
     {
         long now = System.currentTimeMillis();
         Map<String, Map<String, MeterThreshold>> cached = thresholdCache;
-        if (cached != null && now - thresholdLoadedAt < THRESHOLD_CACHE_TTL_MILLIS)
+        if (cached != null && now - thresholdLoadedAt < thresholdTtl)
         {
             return cached;
         }
 
         Map<String, Map<String, MeterThreshold>> loaded = new LinkedHashMap<>();
+        Exception queryError = null;
         try
         {
             List<MeterThreshold> rows = meterCardMapper.selectMeterThresholds();
@@ -466,7 +502,32 @@ public class MeterCardServiceImpl implements IMeterCardService
         catch (Exception ex)
         {
             // 表还没建（未执行迁移 003）或临时不可用时，退回内置默认值继续工作。
+            queryError = ex;
             loaded = new LinkedHashMap<>();
+        }
+
+        // 失败只缓存 30 秒；成功才用 5 分钟的常规刷新间隔。
+        thresholdTtl = queryError == null ? THRESHOLD_CACHE_TTL_MILLIS : THRESHOLD_FAILURE_RETRY_MILLIS;
+
+        // W-7：读不到阈值时页面会静默改用内置默认值，外观上与"读到了库内配置"完全一样。
+        // 这正是"网页端与采集端判定不一致却没人发现"的成因，所以这里必须留下明确痕迹。
+        if (loaded.isEmpty() && !thresholdFallbackWarned)
+        {
+            thresholdFallbackWarned = true;
+            if (queryError != null)
+            {
+                log.warn("读取 meter_threshold 失败，页面判定将改用内置兜底阈值，可能与采集端结论不一致。"
+                    + "若该库确实没有该表，注意迁移 003 只建在 PostgreSQL，而本服务的数据源是 MySQL 从库。", queryError);
+            }
+            else
+            {
+                log.warn("meter_threshold 查询成功但没有任何阈值行，页面判定将改用内置兜底阈值。请确认该库已执行迁移 003 的种子部分。");
+            }
+        }
+        else if (!loaded.isEmpty() && thresholdFallbackWarned)
+        {
+            thresholdFallbackWarned = false;
+            log.info("已读回判定阈值，页面判定恢复按库内配置执行。");
         }
 
         thresholdCache = loaded;
@@ -512,9 +573,10 @@ public class MeterCardServiceImpl implements IMeterCardService
     private void enrichCard(MeterCard card)
     {
         card.setActivePowerKw(toKilowatts(card.getActivePowerTotal()));
+        card.setReactivePowerKvar(toKilovars(card.getReactivePowerTotal()));
         card.setMaxCurrentA(maxCurrent(card.getCurrentA(), card.getCurrentB(), card.getCurrentC()));
         card.setIsToolbar(resolveToolbar(card));
-        applyStatus(card);
+        applyStatus(card, resolveThresholds(card));
     }
 
     private BigDecimal toKilowatts(Float value)
@@ -525,6 +587,13 @@ public class MeterCardServiceImpl implements IMeterCardService
         }
         return BigDecimal.valueOf(value)
             .divide(BigDecimal.valueOf(1000), 2, RoundingMode.HALF_UP);
+    }
+
+    /** 无功功率字段在领域对象里是 Float（有功率是 BigDecimal），复用同一份舍入后转换。 */
+    private Float toKilovars(Float value)
+    {
+        BigDecimal scaled = toKilowatts(value);
+        return scaled == null ? null : scaled.floatValue();
     }
 
     private BigDecimal maxCurrent(Float currentA, Float currentB, Float currentC)
@@ -567,7 +636,7 @@ public class MeterCardServiceImpl implements IMeterCardService
         return false;
     }
 
-    private void applyStatus(MeterCard card)
+    private void applyStatus(MeterCard card, Map<String, MeterThreshold> thresholds)
     {
         long now = System.currentTimeMillis();
         Date collectTime = card.getLastCollectTime();
@@ -594,21 +663,21 @@ public class MeterCardServiceImpl implements IMeterCardService
             return;
         }
 
-        if (isSevereAnomaly(card))
+        if (isSevereAnomaly(card, thresholds))
         {
-            card.setStatusCode("FAULT");
-            card.setStatusText("异常");
+            card.setStatusCode("ABNORMAL");
+            card.setStatusText("数值异常");
             return;
         }
 
-        if (isVoltageAbnormal(card))
+        if (isVoltageAbnormal(card, thresholds))
         {
             card.setStatusCode("VOLTAGE_BAD");
             card.setStatusText("电压异常");
             return;
         }
 
-        if (card.getPowerFactorTotal() != null && card.getPowerFactorTotal() < 0.5f)
+        if (isBelow(card.getPowerFactorTotal(), minOf(thresholds, "power_factor_total", 0.85f)))
         {
             card.setStatusCode("PF_LOW");
             card.setStatusText("功率因数低");
@@ -652,26 +721,33 @@ public class MeterCardServiceImpl implements IMeterCardService
         return "comm_error".equalsIgnoreCase(card.getMeterStatusCode());
     }
 
-    private boolean isSevereAnomaly(MeterCard card)
+    private boolean isSevereAnomaly(MeterCard card, Map<String, MeterThreshold> thresholds)
     {
-        if (card.getFrequency() != null && (card.getFrequency() < 40f || card.getFrequency() > 70f))
+        float frequencyMin = minOf(thresholds, "frequency", 40f);
+        float frequencyMax = maxOf(thresholds, "frequency", 70f);
+        if (isOutOfRange(card.getFrequency(), frequencyMin, frequencyMax))
         {
             return true;
         }
 
-        return isLow(card.getVoltageA()) && isLow(card.getVoltageB()) && isLow(card.getVoltageC());
+        return isDeEnergized(card.getVoltageA()) && isDeEnergized(card.getVoltageB()) && isDeEnergized(card.getVoltageC());
     }
 
-    private boolean isVoltageAbnormal(MeterCard card)
+    private boolean isVoltageAbnormal(MeterCard card, Map<String, MeterThreshold> thresholds)
     {
-        return isOutOfRange(card.getVoltageA(), 180f, 260f)
-            || isOutOfRange(card.getVoltageB(), 180f, 260f)
-            || isOutOfRange(card.getVoltageC(), 180f, 260f);
+        float voltageMin = minOf(thresholds, "voltage_phase", 198f);
+        float voltageMax = maxOf(thresholds, "voltage_phase", 242f);
+        return isOutOfRange(card.getVoltageA(), voltageMin, voltageMax)
+            || isOutOfRange(card.getVoltageB(), voltageMin, voltageMax)
+            || isOutOfRange(card.getVoltageC(), voltageMin, voltageMax);
     }
 
-    private boolean isLow(Float value)
+    /** 三相同时低于此值视为未带电（停电/未合闸），而不是"电压越限"。 */
+    private static final float DEENERGIZED_VOLTAGE = 50f;
+
+    private boolean isDeEnergized(Float value)
     {
-        return value != null && value < 50f;
+        return value != null && value < DEENERGIZED_VOLTAGE;
     }
 
     private boolean isOutOfRange(Float value, float min, float max)

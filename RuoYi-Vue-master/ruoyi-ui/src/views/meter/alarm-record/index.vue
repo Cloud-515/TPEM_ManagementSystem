@@ -45,8 +45,8 @@
           <el-descriptions-item label="B相电流">{{ formatNumber(detail.currentB) }} A</el-descriptions-item>
           <el-descriptions-item label="C相电流">{{ formatNumber(detail.currentC) }} A</el-descriptions-item>
           <el-descriptions-item label="功率因数">{{ formatNumber(detail.powerFactorTotal) }}</el-descriptions-item>
-          <el-descriptions-item label="累计正向电能">{{ formatNumber(detail.forwardActiveEnergyKwh) }} kWh</el-descriptions-item>
-          <el-descriptions-item label="累计反向电能">{{ formatNumber(detail.reverseActiveEnergyKwh) }} kWh</el-descriptions-item>
+          <el-descriptions-item label="累计正向电能">{{ formatNumber(detail.forwardActiveEnergy) }} kWh</el-descriptions-item>
+          <el-descriptions-item label="累计反向电能">{{ formatNumber(detail.reverseActiveEnergy) }} kWh</el-descriptions-item>
           <el-descriptions-item label="最后采集时间">{{ detail.lastCollectTime || '--' }}</el-descriptions-item>
         </el-descriptions>
       </template>

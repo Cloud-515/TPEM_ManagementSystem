@@ -17,7 +17,7 @@ function pad(value) { return String(value).padStart(2, '0') }
 function round(value, digits) { const factor = Math.pow(10, digits === undefined ? 2 : digits); return Math.round(value * factor) / factor }
 function formatDate(date) { return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}` }
 function snapshotDate() { return new Date(Math.floor(Date.now() / SNAPSHOT_INTERVAL) * SNAPSHOT_INTERVAL) }
-function statusText(code) { return ({ OK: '正常', PF_LOW: '功率因数偏低', VOLTAGE_BAD: '电压异常', FAULT: '通信故障', NODATA: '等待数据', WAITING: '等待数据' })[code] || '状态未知' }
+function statusText(code) { return ({ OK: '正常', PF_LOW: '功率因数偏低', VOLTAGE_BAD: '电压异常', FAULT: '通信故障', ABNORMAL: '数值异常', NODATA: '等待数据', WAITING: '等待数据' })[code] || '状态未知' }
 
 function buildMeter(definition, date) {
   const seconds = date.getTime() / 1000

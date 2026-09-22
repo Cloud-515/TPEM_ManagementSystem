@@ -53,7 +53,7 @@ import { getMeterStatusLabel, getMeterStatusType, formatMeterNumber } from './me
 export default {
   name: 'RealtimeDetail',
   data() {
-    return { visible: false, loading: false, activeTab: 'running', detail: {} }
+    return { visible: false, loading: false, activeTab: 'running', detail: {}, requestId: 0 }
   },
   methods: {
     getMeterStatusLabel,
@@ -63,7 +63,16 @@ export default {
       this.activeTab = tab
       this.visible = true
       this.loading = true
-      getRealtimeDetail(meterId).then(response => { this.detail = response.data || {} }).catch(() => { this.detail = {} }).finally(() => { this.loading = false })
+
+      // 请求序号守卫：抽屉每次打开都先清空内容，且只接受最后一次请求的响应。
+      // 原来既不重置 detail 也不校验响应归属 —— 快速从 A 设备切到 B 设备时，
+      // 标题与内容会短暂显示 A；如果 A 的响应后到，还会把 B 的数据覆盖成 A 的。
+      const requestId = ++this.requestId
+      this.detail = {}
+      getRealtimeDetail(meterId)
+        .then(response => { if (requestId === this.requestId) this.detail = response.data || {} })
+        .catch(() => { if (requestId === this.requestId) this.detail = {} })
+        .finally(() => { if (requestId === this.requestId) this.loading = false })
     },
     openPage(name, category) {
       if (!this.detail.meterId) return

@@ -38,7 +38,7 @@
 import { listMeterCards } from '@/api/system/meter'
 import { getMeterStatusLabel, meterStatusMeta, formatMeterNumber } from '@/views/meter/components/meter-utils'
 
-const severity = { FAULT: 0, NODATA: 1, VOLTAGE_BAD: 2, PF_LOW: 3, WAITING: 4 }
+const severity = { FAULT: 0, ABNORMAL: 1, NODATA: 2, VOLTAGE_BAD: 3, PF_LOW: 4, WAITING: 5 }
 
 export default {
   name: 'MeterExceptionDevices',

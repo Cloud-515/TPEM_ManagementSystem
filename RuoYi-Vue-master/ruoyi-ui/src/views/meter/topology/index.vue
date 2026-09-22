@@ -10,6 +10,8 @@
       </div>
     </div>
 
+    <el-alert v-if="loadError" class="topology-load-error" :title="loadError" type="error" :closable="false" show-icon />
+
     <div v-if="editing" class="edit-tools">
       <el-button size="small" type="primary" plain icon="el-icon-plus" @click="addRegion">新增区域</el-button>
       <span>新增、重命名和拖拽仅在点击“保存布局”后生效；删除区域前请先将设备移至其他区域或未分配设备。</span>
@@ -94,7 +96,7 @@ export default {
   components: { draggable, RealtimeDetail },
   data() {
     return {
-      loading: false, saving: false, editing: false, regions: [], unassignedMeters: [], originalLayout: null,
+      loading: false, saving: false, editing: false, regions: [], unassignedMeters: [], originalLayout: null, loadError: '',
       regionDialog: { visible: false, name: '', region: null }, dragOptions: { name: 'meter-topology', pull: true, put: true }
     }
   },
@@ -102,16 +104,27 @@ export default {
   methods: {
     async loadTopology() {
       this.loading = true
+      this.loadError = ''
       try {
         const response = await getMeterTopology()
         const data = response.data || response
         this.regions = data.regions || []
         this.unassignedMeters = data.unassignedMeters || []
         this.originalLayout = this.cloneLayout()
+      } catch (error) {
+        // 原实现只有 try/finally：接口失败时 regions 停在空数组，
+        // 页面落到"尚未创建拓扑区域"的空态，把一次请求失败误导成"现场还没有拓扑配置"，
+        // 而且此时保存会用空配置覆盖掉现有区域。
+        this.loadError = '拓扑配置加载失败。在刷新成功之前请不要保存，否则会用空配置覆盖现有区域。'
+        this.$message.error(this.loadError)
       } finally { this.loading = false }
     },
     cloneLayout() { return JSON.parse(JSON.stringify({ regions: this.regions, unassignedMeters: this.unassignedMeters })) },
     toggleEdit() {
+      if (!this.editing && this.loadError) {
+        this.$modal.msgError('拓扑配置未成功加载，请先刷新再编辑')
+        return
+      }
       this.editing = !this.editing
       if (this.editing) this.originalLayout = this.cloneLayout()
     },
@@ -136,6 +149,11 @@ export default {
       this.editing = false
     },
     async saveLayout() {
+      // 加载失败时 regions 是空的，此时保存等于用空配置覆盖现有区域 —— 直接拒绝。
+      if (this.loadError) {
+        this.$modal.msgError('拓扑配置未成功加载，已阻止保存以免覆盖现有区域，请先刷新')
+        return
+      }
       this.saving = true
       try {
         await saveMeterTopology({ regions: this.regions })

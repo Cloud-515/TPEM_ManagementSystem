@@ -36,13 +36,22 @@ public class TableSupport
     public static final String REASONABLE = "reasonable";
 
     /**
+     * 单页条数上限（W-10）。
+     * pageSize 直接来自请求参数，原本既没有上限也没有下限：
+     * ?pageSize=1000000 可以用一个请求把整张表拉进 JVM，pageNum/pageSize 为 0 或负数时
+     * 还会让 PageHelper 产生意料外的行为。这里统一夹取，分页接口一律受此约束。
+     */
+    private static final int MAX_PAGE_SIZE = 500;
+
+    /**
      * 封装分页对象
      */
     public static PageDomain getPageDomain()
     {
         PageDomain pageDomain = new PageDomain();
-        pageDomain.setPageNum(Convert.toInt(ServletUtils.getParameter(PAGE_NUM), 1));
-        pageDomain.setPageSize(Convert.toInt(ServletUtils.getParameter(PAGE_SIZE), 10));
+        pageDomain.setPageNum(Math.max(Convert.toInt(ServletUtils.getParameter(PAGE_NUM), 1), 1));
+        pageDomain.setPageSize(
+            Math.min(Math.max(Convert.toInt(ServletUtils.getParameter(PAGE_SIZE), 10), 1), MAX_PAGE_SIZE));
         pageDomain.setOrderByColumn(ServletUtils.getParameter(ORDER_BY_COLUMN));
         pageDomain.setIsAsc(ServletUtils.getParameter(IS_ASC));
         pageDomain.setReasonable(ServletUtils.getParameterToBool(REASONABLE));
