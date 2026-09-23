@@ -1319,7 +1319,13 @@ updated_at = CURRENT_TIMESTAMP;";
             {
                 command.Parameters.AddWithValue("@site_id", siteId);
                 command.Parameters.AddWithValue("@box_code", boxCode);
-                command.Parameters.AddWithValue("@box_name", string.IsNullOrWhiteSpace(boxName) ? boxCode : boxName);
+                // 空名称回退成 box_code，再按"同一站点内不重名"化解
+                command.Parameters.AddWithValue("@box_name", ResolveBoxName(
+                    connection,
+                    transaction,
+                    siteId,
+                    boxCode,
+                    string.IsNullOrWhiteSpace(boxName) ? boxCode : boxName));
                 command.Parameters.AddWithValue("@location", string.IsNullOrWhiteSpace(boxName) ? (object)DBNull.Value : boxName);
                 command.ExecuteNonQuery();
             }
@@ -1362,12 +1368,21 @@ mqtt_topic = EXCLUDED.mqtt_topic,
 last_seen_time = EXCLUDED.last_seen_time,
 updated_at = CURRENT_TIMESTAMP;";
 
+            // 同一配电箱内电表名不能重复，落库前先化解
+            string meterName = ResolveMeterName(
+                connection,
+                transaction,
+                siteId,
+                boxId,
+                item.MeterCode,
+                string.IsNullOrWhiteSpace(item.MeterName) ? item.MeterCode : item.MeterName);
+
             using (var command = new NpgsqlCommand(sql, connection, transaction))
             {
                 command.Parameters.AddWithValue("@site_id", siteId);
                 command.Parameters.AddWithValue("@box_id", boxId);
                 command.Parameters.AddWithValue("@meter_code", item.MeterCode);
-                command.Parameters.AddWithValue("@meter_name", string.IsNullOrWhiteSpace(item.MeterName) ? item.MeterCode : item.MeterName);
+                command.Parameters.AddWithValue("@meter_name", meterName);
                 command.Parameters.AddWithValue("@device_type", (object)(item.DeviceModel ?? "Legacy"));
                 command.Parameters.AddWithValue("@slave_address", (int)item.SlaveAddress);
                 command.Parameters.AddWithValue("@location", (object)(item.Location ?? registry.BoxName ?? string.Empty));
@@ -1378,6 +1393,124 @@ updated_at = CURRENT_TIMESTAMP;";
             }
 
             return GetMeterId(connection, transaction, item.MeterCode, registry.SiteCode);
+        }
+
+        /// <summary>
+        /// 同一配电箱内电表名不允许重复 —— 一个箱里两台同名电表，拓扑图和列表里都分不清是哪一台。
+        /// 这里只做软处理，绝不阻断注册：注册不上那一台，它的遥测会因为找不到 meter 行而落不了库，比重名更糟。
+        ///   原地改名且名字被占  → 拒绝这次改名，保留库里原来的名字；
+        ///   新装 / 换箱且名字被占 → 换一个不冲突的名字（换箱时"保留原名"会在目标箱里造出重名，所以也只能改名）。
+        /// 两种情况都记 Warn，方便有人去把上报配置里的重名改掉。
+        /// </summary>
+        private static string ResolveMeterName(NpgsqlConnection connection, NpgsqlTransaction transaction, long siteId, long boxId, string meterCode, string wantedName)
+        {
+            const string sql = @"
+SELECT meter_code, meter_name, box_id
+FROM meter
+WHERE site_id = @site_id AND (meter_code = @meter_code OR box_id = @box_id);";
+
+            var rows = new List<KeyValuePair<string, KeyValuePair<string, long>>>();
+            using (var command = new NpgsqlCommand(sql, connection, transaction))
+            {
+                command.Parameters.AddWithValue("@site_id", siteId);
+                command.Parameters.AddWithValue("@meter_code", meterCode);
+                command.Parameters.AddWithValue("@box_id", boxId);
+                using (var reader = command.ExecuteReader())
+                {
+                    while (reader.Read())
+                    {
+                        rows.Add(new KeyValuePair<string, KeyValuePair<string, long>>(
+                            reader.IsDBNull(0) ? string.Empty : reader.GetString(0),
+                            new KeyValuePair<string, long>(
+                                reader.IsDBNull(1) ? string.Empty : reader.GetString(1),
+                                reader.IsDBNull(2) ? 0L : reader.GetInt64(2))));
+                    }
+                }
+            }
+
+            var clash = rows.FirstOrDefault(r => !string.Equals(r.Key, meterCode, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(r.Value.Key, wantedName, StringComparison.Ordinal));
+            if (clash.Key == null)
+            {
+                return wantedName;
+            }
+
+            var own = rows.FirstOrDefault(r => string.Equals(r.Key, meterCode, StringComparison.OrdinalIgnoreCase));
+            bool renamingInPlace = own.Key != null && own.Value.Value == boxId && !string.IsNullOrEmpty(own.Value.Key);
+            if (renamingInPlace)
+            {
+                AppLogger.Warn("Registry", "本配电箱内已有同名电表「" + wantedName + "」(设备 " + clash.Key + ")，拒绝把 " + meterCode
+                    + " 改成这个名字，保留原名「" + own.Value.Key + "」。请修正上报配置里的名称。");
+                return own.Value.Key;
+            }
+
+            string unique = MakeUniqueName(wantedName, rows.Select(r => r.Value.Key));
+            AppLogger.Warn("Registry", "本配电箱内已有同名电表「" + wantedName + "」(设备 " + clash.Key + ")，设备 " + meterCode
+                + " 改用「" + unique + "」以免重名。请修正上报配置里的名称。");
+            return unique;
+        }
+
+        /// <summary>
+        /// 同一站点内配电箱名不允许重复（box_code 早有 uk_site_box，名称这一维之前没人管）。
+        /// 箱体的"容器"是站点且不会变，所以只有原地改名一种情况：名字被占就保留原容器名，新箱体则换一个不冲突的名字。
+        /// </summary>
+        private static string ResolveBoxName(NpgsqlConnection connection, NpgsqlTransaction transaction, long siteId, string boxCode, string wantedName)
+        {
+            const string sql = @"
+SELECT box_code, box_name
+FROM distribution_box
+WHERE site_id = @site_id;";
+
+            var rows = new List<KeyValuePair<string, string>>();
+            using (var command = new NpgsqlCommand(sql, connection, transaction))
+            {
+                command.Parameters.AddWithValue("@site_id", siteId);
+                using (var reader = command.ExecuteReader())
+                {
+                    while (reader.Read())
+                    {
+                        rows.Add(new KeyValuePair<string, string>(
+                            reader.IsDBNull(0) ? string.Empty : reader.GetString(0),
+                            reader.IsDBNull(1) ? string.Empty : reader.GetString(1)));
+                    }
+                }
+            }
+
+            var clash = rows.FirstOrDefault(r => !string.Equals(r.Key, boxCode, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(r.Value, wantedName, StringComparison.Ordinal));
+            if (clash.Key == null)
+            {
+                return wantedName;
+            }
+
+            var own = rows.FirstOrDefault(r => string.Equals(r.Key, boxCode, StringComparison.OrdinalIgnoreCase));
+            if (own.Key != null && !string.IsNullOrEmpty(own.Value))
+            {
+                AppLogger.Warn("Registry", "本站点内已有同名配电箱「" + wantedName + "」(箱体 " + clash.Key + ")，拒绝把 " + boxCode
+                    + " 改成这个名字，保留原名「" + own.Value + "」。请修正上报配置里的名称。");
+                return own.Value;
+            }
+
+            string unique = MakeUniqueName(wantedName, rows.Select(r => r.Value));
+            AppLogger.Warn("Registry", "本站点内已有同名配电箱「" + wantedName + "」(箱体 " + clash.Key + ")，箱体 " + boxCode
+                + " 改用「" + unique + "」以免重名。请修正上报配置里的名称。");
+            return unique;
+        }
+
+        /// <summary>依次试「名字(2)」「名字(3)」……取第一个没被占用的。</summary>
+        private static string MakeUniqueName(string wanted, IEnumerable<string> used)
+        {
+            var taken = new HashSet<string>(used ?? Enumerable.Empty<string>(), StringComparer.Ordinal);
+            for (int index = 2; index <= 99; index++)
+            {
+                string candidate = wanted + "(" + index + ")";
+                if (!taken.Contains(candidate))
+                {
+                    return candidate;
+                }
+            }
+
+            return wanted + "(" + Guid.NewGuid().ToString("N").Substring(0, 6) + ")";
         }
 
         private static void DisableMeter(NpgsqlConnection connection, NpgsqlTransaction transaction, long siteId, long boxId, MeterRegistryMessage registry, MeterRegistryItem item)

@@ -44,7 +44,10 @@ router.beforeEach((to, from, next) => {
             next({ ...to, replace: true }) // hack方法 确保addRoutes已完成
           })
         }).catch(err => {
-            store.dispatch('LogOut').then(() => {
+            // LogOut 只有在后端 logout 接口成功时才 resolve；令牌已失效时该接口同样返回 401，
+            // 此时必须兜底清掉本地令牌，否则 next() 永远不会执行，导航悬停导致页面白屏
+            store.dispatch('LogOut').catch(() => store.dispatch('FedLogOut')).then(() => {
+              isRelogin.show = false
               Message.error(err)
               next({ path: '/' })
             })

@@ -14,6 +14,8 @@ import java.util.Map;
 import java.util.stream.Collectors;
 import com.ruoyi.common.annotation.DataSource;
 import com.ruoyi.common.enums.DataSourceType;
+import com.ruoyi.common.exception.ServiceException;
+import com.ruoyi.common.utils.StringUtils;
 import com.ruoyi.system.domain.MeterEnergyReading;
 import com.ruoyi.system.domain.MeterHistoryTrend;
 import com.ruoyi.system.domain.MeterQualityRiskStats;
@@ -25,7 +27,10 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import com.ruoyi.system.domain.MeterCard;
+import com.ruoyi.system.domain.MeterTopologyLayout;
+import com.ruoyi.system.domain.MeterTopologyRegion;
 import com.ruoyi.system.mapper.MeterCardMapper;
 import com.ruoyi.system.service.IMeterCardService;
 
@@ -173,6 +178,99 @@ public class MeterCardServiceImpl implements IMeterCardService
             enrichCard(card);
         }
         return card;
+    }
+
+    @Override
+    public int updateMeterBox(Long meterId, Long boxId)
+    {
+        if (meterId == null || boxId == null)
+        {
+            return 0;
+        }
+        // 本类声明在 SLAVE 数据源上，meter / distribution_box 都在那个库里；
+        // 拓扑保存跑在 MASTER 上，箱体归属必须通过这里换库执行。
+        return meterCardMapper.updateMeterBox(meterId, boxId);
+    }
+
+    @Override
+    public int countBoxSlaveConflict(Long meterId, Long boxId, Integer slaveAddress)
+    {
+        if (meterId == null || boxId == null || slaveAddress == null)
+        {
+            return 0;
+        }
+        return meterCardMapper.countBoxSlaveConflict(meterId, boxId, slaveAddress);
+    }
+
+    @Override
+    public int countSiteMeterCodeConflict(Long meterId, Long boxId, String meterCode)
+    {
+        if (meterId == null || boxId == null || StringUtils.isEmpty(meterCode))
+        {
+            return 0;
+        }
+        return meterCardMapper.countSiteMeterCodeConflict(meterId, boxId, meterCode);
+    }
+
+    @Override
+    @DataSource(DataSourceType.SLAVE)
+    public void validateTopologyBoxChanges(MeterTopologyLayout layout)
+    {
+        for (MeterCard meter : boxChangedMeters(layout))
+        {
+            String boxLabel = StringUtils.isNotEmpty(meter.getBoxName()) ? meter.getBoxName() : String.valueOf(meter.getBoxId());
+            String meterLabel = StringUtils.isNotEmpty(meter.getMeterName()) ? meter.getMeterName() : String.valueOf(meter.getMeterId());
+            // uk_box_slave：同一配电箱内从站地址唯一。现场每个箱体都从地址 1 开始编址，跨箱拖动经常撞上。
+            if (countBoxSlaveConflict(meter.getMeterId(), meter.getBoxId(), meter.getSlaveAddress()) > 0)
+            {
+                throw new ServiceException("配电箱「" + boxLabel + "」里已经有从站地址 " + meter.getSlaveAddress()
+                    + " 的设备，同一配电箱内从站地址不能重复，无法把「" + meterLabel + "」挂进去");
+            }
+            // uk_site_meter：同一站点内设备编号唯一。改挂箱体时站点会跟随，所以跨站点时会撞。
+            if (countSiteMeterCodeConflict(meter.getMeterId(), meter.getBoxId(), meter.getMeterCode()) > 0)
+            {
+                throw new ServiceException("「" + boxLabel + "」所属站点里已经有设备编号 " + meter.getMeterCode()
+                    + " 的设备，跨站点改挂箱体会冲突，请先调整设备编号");
+            }
+        }
+    }
+
+    @Override
+    @Transactional
+    @DataSource(DataSourceType.SLAVE)
+    public int applyTopologyBoxChanges(MeterTopologyLayout layout)
+    {
+        int affected = 0;
+        for (MeterCard meter : boxChangedMeters(layout))
+        {
+            affected += updateMeterBox(meter.getMeterId(), meter.getBoxId());
+        }
+        return affected;
+    }
+
+    /** 布局里带了箱体标识的电表。没带 boxId 的表示这次不动它的箱体。 */
+    private List<MeterCard> boxChangedMeters(MeterTopologyLayout layout)
+    {
+        List<MeterCard> meters = new ArrayList<MeterCard>();
+        if (layout == null || layout.getRegions() == null)
+        {
+            return meters;
+        }
+        for (MeterTopologyRegion region : layout.getRegions())
+        {
+            if (region == null || region.getMeters() == null)
+            {
+                continue;
+            }
+            for (MeterCard meter : region.getMeters())
+            {
+                if (meter != null && meter.getMeterId() != null && meter.getBoxId() != null)
+                {
+                    meters.add(meter);
+                }
+            }
+        }
+        return meters;
     }
 
     @Override

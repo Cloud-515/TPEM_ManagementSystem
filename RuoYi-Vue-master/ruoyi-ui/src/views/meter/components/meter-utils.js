@@ -16,13 +16,38 @@ export function getMeterStatusType(code) {
   return meterStatusMeta[code] ? meterStatusMeta[code].type : 'info'
 }
 
+// 展示与判定共用的口径，与 meter_threshold 表保持一致：
+// 相电压 220V±10% → 198~242V、功率因数考核值 0.85（来源 docs/仪表监测判定标准.md）。
+export const VOLTAGE_PHASE_MIN = 198
+export const VOLTAGE_PHASE_MAX = 242
+export const POWER_FACTOR_REFERENCE = 0.85
+
+// Element 的四种语义色 → 拓扑页电表皮肤的四档色调。
+const meterToneByType = { success: 'ok', warning: 'warn', danger: 'danger', info: 'idle' }
+
+export function getMeterStatusTone(code) {
+  const type = (meterStatusMeta[code] || {}).type
+  return meterToneByType[type] || 'idle'
+}
+
+/**
+ * 格式化电表数值。
+ * 入参为空（null / undefined / 空串）时返回占位符 —— 不能让 Number(null) === 0 把"没有数据"
+ * 显示成 0.00，那会被读成"负载为零"而不是"没采到"。
+ */
 export function formatMeterNumber(value, digits = 2) {
+  if (value === null || value === undefined || value === '') return '--'
   const number = Number(value)
   return Number.isFinite(number) ? number.toLocaleString('zh-CN', { maximumFractionDigits: digits }) : '--'
 }
 
 export function formatMeterDateTime(value) {
   return value || '--'
+}
+
+/** 从站地址按两位显示（现场习惯），没有值就留占位符。 */
+export function formatMeterAddress(value) {
+  return value === null || value === undefined || value === '' ? '--' : String(value).padStart(2, '0')
 }
 
 export const meterQualityRiskLabels = {
@@ -43,8 +68,8 @@ export function getMeterQualityRiskCodes(meter) {
   if (Array.isArray(meter && meter.qualityRiskCodes)) return meter.qualityRiskCodes
   const risks = []
   if (!meter || meter.statusCode !== 'OK') risks.push('STATUS_ABNORMAL')
-  if (isBelow(meter && meter.powerFactorTotal, 0.85)) risks.push('POWER_FACTOR_LOW')
-  if (['voltageA', 'voltageB', 'voltageC'].some(key => isOutside(meter && meter[key], 198, 242))) risks.push('VOLTAGE_OUT_OF_RANGE')
+  if (isBelow(meter && meter.powerFactorTotal, POWER_FACTOR_REFERENCE)) risks.push('POWER_FACTOR_LOW')
+  if (['voltageA', 'voltageB', 'voltageC'].some(key => isOutside(meter && meter[key], VOLTAGE_PHASE_MIN, VOLTAGE_PHASE_MAX))) risks.push('VOLTAGE_OUT_OF_RANGE')
   if (['voltageThdA', 'voltageThdB', 'voltageThdC'].some(key => isAbove(meter && meter[key], 5))) risks.push('VOLTAGE_THD_EXCEEDED')
   if (['currentThdA', 'currentThdB', 'currentThdC'].some(key => isAbove(meter && meter[key], 8))) risks.push('CURRENT_THD_EXCEEDED')
   if (isAbove(meter && meter.voltageUnbalance, 2)) risks.push('VOLTAGE_UNBALANCE_EXCEEDED')

@@ -35,6 +35,7 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         <result property="slaveAddress" column="slave_address" />
         <result property="boxCode" column="box_code" />
         <result property="boxName" column="box_name" />
+        <result property="boxId" column="box_id" />
         <result property="isToolbar" column="is_toolbar" />
         <result property="siteCode" column="site_code" />
         <result property="siteName" column="site_name" />
@@ -77,6 +78,7 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         m.meter_code,
         m.meter_name,
         m.slave_address,
+        b.id AS box_id,
         b.box_code,
         b.box_name,
         m.is_toolbar,
@@ -403,5 +405,39 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         LEFT JOIN meter_power_quality_latest ql ON ql.meter_id = m.id
         WHERE m.id = #{meterId}
         LIMIT 1
+    </select>
+
+    <!--
+      把电表挂到另一个配电箱。箱体归属是设备自身的属性（实时运行 / 电能 / 质量等页面共用），
+      所以只能改 meter.box_id 这一个来源；箱体所属站点一并跟随，避免站点与箱体互相矛盾。
+      box_id 没变时不产生写操作（<=> 是 MySQL 的空值安全等值比较）。
+    -->
+    <update id="updateMeterBox">
+        update meter m
+        inner join distribution_box b on b.id = #{boxId}
+        set m.box_id = #{boxId},
+            m.site_id = b.site_id,
+            m.updated_at = now()
+        where m.id = #{meterId}
+          and not (m.box_id &lt;=&gt; #{boxId})
+    </update>
+
+    <!-- 目标配电箱内是否已被别的表占用该从站地址（含已停用、不在拓扑布局里的表） -->
+    <select id="countBoxSlaveConflict" resultType="int">
+        select count(1)
+        from meter
+        where box_id = #{boxId}
+          and slave_address = #{slaveAddress}
+          and id &lt;&gt; #{meterId}
+    </select>
+
+    <!-- 目标箱体所属站点内是否已被别的表占用该设备编号 -->
+    <select id="countSiteMeterCodeConflict" resultType="int">
+        select count(1)
+        from meter m
+        inner join distribution_box b on b.id = #{boxId}
+        where m.site_id = b.site_id
+          and m.meter_code = #{meterCode}
+          and m.id &lt;&gt; #{meterId}
     </select>
 </mapper>

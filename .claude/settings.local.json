@@ -3,7 +3,25 @@
     "allow": [
       "PowerShell(& \"C:\\\\Program Files\\\\dotnet\\\\dotnet.exe\" build \"e:\\\\c#code\\\\TPEM_ManagementSystem\\\\MeterAcquisitionPro.sln\" -c Debug -p:OutputPath=\"e:\\\\c#code\\\\TPEM_ManagementSystem\\\\MeterAcquisition\\\\bin\\\\Debug_Verify\\\\\")",
       "Bash(mvn -f \"e:/c#code/TPEM_ManagementSystem/RuoYi-Vue-master/pom.xml\" -pl ruoyi-admin -am -DskipTests compile)",
-      "Bash(npm --prefix \"e:/c#code/TPEM_ManagementSystem/RuoYi-Vue-master/ruoyi-ui\" run build)"
+      "Bash(npm --prefix \"e:/c#code/TPEM_ManagementSystem/RuoYi-Vue-master/ruoyi-ui\" run build)",
+      "PowerShell(cd 'e:\\\\c#code\\\\TPEM_ManagementSystem'; try { Rename-Item -Path 'RuoYi-Vue-master' -NewName 'RuoYi-Vue-web.bak-merge' -ErrorAction Stop; Write-Output \"重命名成功\" } catch { Write-Output \"重命名失败: $\\($_.Exception.Message\\)\" }; Write-Output \"--- 可能占用该目录的进程 ---\"; Get-Process | Where-Object { $_.ProcessName -match 'node|java|code|devenv|explorer' } | Select-Object Id,ProcessName | Format-Table -AutoSize | Out-String)",
+      "Bash(python -)",
+      "PowerShell(cd 'e:\\\\c#code\\\\TPEM_ManagementSystem'; dotnet build MeterAcquisitionPro.sln -v:m 2>&1 | Select-String -Pattern \": error \" | ForEach-Object { $_.Line.Trim\\(\\) } | Sort-Object -Unique | Select-Object -First 40)",
+      "PowerShell(cd 'e:\\\\c#code\\\\TPEM_ManagementSystem'; dotnet build MeterAcquisitionPro.sln -v:m 2>&1 | Select-String -Pattern \": error \" | ForEach-Object { $_.Line.Trim\\(\\) } | Sort-Object -Unique | Select-Object -First 25)",
+      "PowerShell(cd 'e:\\\\c#code\\\\TPEM_ManagementSystem'; dotnet build MeterAcquisitionPro.sln -v:m 2>&1 | Select-String -Pattern \": error \" | ForEach-Object { $_.Line.Trim\\(\\) } | Sort-Object -Unique | Select-Object -First 20)",
+      "PowerShell(cd 'e:\\\\c#code\\\\TPEM_ManagementSystem'; dotnet build MeterAcquisitionPro.sln -v:m 2>&1 | Select-String -Pattern \": error \" | ForEach-Object { $_.Line.Trim\\(\\) } | Sort-Object -Unique | Select-Object -First 15)",
+      "PowerShell(cd 'e:\\\\c#code\\\\TPEM_ManagementSystem'; dotnet build MeterAcquisitionPro.sln -v:m 2>&1 | Select-String -Pattern \": error \" | ForEach-Object { $_.Line.Trim\\(\\) } | Sort-Object -Unique | Select-Object -First 15; Write-Output \"--- 汇总 ---\"; dotnet build MeterAcquisitionPro.sln -v:m 2>&1 | Select-String -Pattern \"个错误\" | Select-Object -Last 1)",
+      "PowerShell(cd 'e:\\\\c#code\\\\TPEM_ManagementSystem'; dotnet build MeterAcquisitionPro.sln -v:m 2>&1 | Select-String -Pattern \": error |: warning CS\" | ForEach-Object { $_.Line.Trim\\(\\) } | Sort-Object -Unique | Select-Object -First 15)",
+      "PowerShell(cd 'e:\\\\c#code\\\\TPEM_ManagementSystem'; dotnet build MeterAcquisitionPro.sln -t:Rebuild -v:m 2>&1 | Select-String -Pattern \": error |: warning CS|个错误|个警告\" | ForEach-Object { $_.Line.Trim\\(\\) } | Sort-Object -Unique)",
+      "PowerShell(cd $env:TEMP; Remove-Item -Recurse -Force nugetprobe -ErrorAction SilentlyContinue; New-Item -ItemType Directory nugetprobe | Out-Null; cd nugetprobe; dotnet new classlib -f net48 -o probe 2>&1 | Select-Object -Last 3; cd probe; \\(Get-Content probe.csproj -Raw\\) -replace '</Project>', \"  <ItemGroup>`n    <PackageReference Include=`\"xunit`\" Version=`\"2.9.2`\" />`n  </ItemGroup>`n</Project>\" | Set-Content probe.csproj -Encoding utf8; dotnet restore --no-cache 2>&1 | Select-String -Pattern \"error|Restored|已还原|无法\" | Select-Object -First 5)",
+      "PowerShell(cd 'e:\\\\c#code\\\\TPEM_ManagementSystem'; dotnet build MeterAcquisitionPro.sln -v:m 2>&1 | Select-String -Pattern \": error \" | ForEach-Object { $_.Line.Trim\\(\\) } | Sort-Object -Unique | Select-Object -First 10; Write-Output \"--- build done ---\"; cd TPEM.Tests; dotnet test 2>&1 | Select-String -Pattern \"已通过|失败\" | Select-Object -First 3)",
+      "PowerShell(cd 'e:\\\\c#code\\\\TPEM_ManagementSystem'; dotnet build MeterAcquisitionPro.sln -v:m 2>&1 | Select-String -Pattern \": error \" | ForEach-Object { $_.Line.Trim\\(\\) } | Sort-Object -Unique | Select-Object -First 12; Write-Output \"--- done ---\")",
+      "PowerShell(cd 'e:\\\\c#code\\\\TPEM_ManagementSystem'; dotnet build MeterAcquisitionPro.sln -t:Rebuild -v:m 2>&1 | Select-String -Pattern \": error |: warning CS|个错误|个警告\" | ForEach-Object { $_.Line.Trim\\(\\) } | Sort-Object -Unique; Write-Output \"=== 测试 ===\"; cd TPEM.Tests; dotnet test 2>&1 | Select-String -Pattern \"已通过|失败:\" | Select-Object -First 3)",
+      "Bash(cat)",
+      "Bash(export PGPASSWORD=12345)",
+      "Bash(psql -h localhost -p 11451 -U postgres -d ma -t -A -c \"select table_name from information_schema.tables where table_schema='public' and table_name like 'heat_pump%' order by 1;\")",
+      "Bash(./apply.sh)",
+      "Bash(./apply.sh --verify)"
     ]
   }
 }

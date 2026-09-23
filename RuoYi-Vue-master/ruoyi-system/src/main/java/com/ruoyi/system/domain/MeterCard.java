@@ -13,6 +13,8 @@ public class MeterCard
     private Integer slaveAddress;
     private String boxCode;
     private String boxName;
+    // 箱体主键。拓扑页把电表拖进另一个配电箱时要靠它写回 meter.box_id（箱体名可能重名，不能用名字定位）
+    private Long boxId;
     private String siteCode;
     private String siteName;
     @JsonProperty("isToolbar")
@@ -119,6 +121,16 @@ public class MeterCard
     public void setBoxName(String boxName)
     {
         this.boxName = boxName;
+    }
+
+    public Long getBoxId()
+    {
+        return boxId;
+    }
+
+    public void setBoxId(Long boxId)
+    {
+        this.boxId = boxId;
     }
 
     public String getSiteCode()

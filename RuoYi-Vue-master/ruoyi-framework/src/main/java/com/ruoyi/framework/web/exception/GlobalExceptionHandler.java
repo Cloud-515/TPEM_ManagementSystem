@@ -16,6 +16,7 @@ import com.ruoyi.common.core.domain.AjaxResult;
 import com.ruoyi.common.core.text.Convert;
 import com.ruoyi.common.exception.DemoModeException;
 import com.ruoyi.common.exception.ServiceException;
+import com.ruoyi.common.exception.base.BaseException;
 import com.ruoyi.common.utils.StringUtils;
 import com.ruoyi.common.utils.html.EscapeUtil;
 
@@ -64,6 +65,22 @@ public class GlobalExceptionHandler
         log.error(e.getMessage(), e);
         Integer code = e.getCode();
         return StringUtils.isNotNull(code) ? AjaxResult.error(code, e.getMessage()) : AjaxResult.error(e.getMessage());
+    }
+
+    /**
+     * 基础业务异常（UserException、FileException 等）。
+     *
+     * 这些异常的 message 取自 i18n 资源（"验证码错误""用户不存在/密码错误"），是给使用者看的
+     * 固定文案，不含库表信息。不单独接住就会落进下面的 Runtime/Exception 兜底，
+     * 把"验证码输错"显示成"系统内部错误"。
+     */
+    @ExceptionHandler(BaseException.class)
+    public AjaxResult handleBaseException(BaseException e, HttpServletRequest request)
+    {
+        // 此处不能取 e.getCode()：BaseException 的 code 是 i18n 键（如 user.jcaptcha.error），不是数字状态码。
+        // 也刻意不用 warn：logback.xml 的两个文件 appender 都是 LevelFilter，只收 INFO 和 ERROR，warn 不会落盘。
+        log.info("请求地址'{}',业务异常：{}", request.getRequestURI(), e.getMessage());
+        return AjaxResult.error(e.getMessage());
     }
 
     /**

@@ -46,6 +46,22 @@ public interface MeterCardMapper
     public MeterCard selectRealtimeDetail(Long meterId);
 
     /**
+     * 把电表挂到另一个配电箱。拓扑页允许把电表拖进别的配电箱，那本质是设备自身的箱体归属变了，
+     * 而箱体归属被实时运行 / 电能 / 质量等页面共用，所以只能写 meter.box_id 这一个来源。
+     * 箱体所属站点一并跟随，避免出现站点与箱体互相矛盾。box_id 没变时不产生写操作。
+     */
+    public int updateMeterBox(@Param("meterId") Long meterId, @Param("boxId") Long boxId);
+
+    /**
+     * 目标配电箱里是否已经有别的表占用这个从站地址（uk_box_slave）。
+     * 走数据库而不是只比对布局里的表，是因为已停用（is_enabled = 0）的表不在拓扑布局里，但仍然占着地址。
+     */
+    public int countBoxSlaveConflict(@Param("meterId") Long meterId, @Param("boxId") Long boxId, @Param("slaveAddress") Integer slaveAddress);
+
+    /** 目标箱体所属站点里是否已经有别的表占用这个设备编号（uk_site_meter）。 */
+    public int countSiteMeterCodeConflict(@Param("meterId") Long meterId, @Param("boxId") Long boxId, @Param("meterCode") String meterCode);
+
+    /**
      * 查询仪表正向有功累计电能读数。
      *
      * @param beginTime 开始时间

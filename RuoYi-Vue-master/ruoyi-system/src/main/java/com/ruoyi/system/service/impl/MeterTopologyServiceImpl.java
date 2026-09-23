@@ -84,6 +84,7 @@ public class MeterTopologyServiceImpl implements IMeterTopologyService
             throw new ServiceException("拓扑区域不能为空");
         }
         Set<Long> regionIds = new HashSet<Long>();
+        Set<String> regionNames = new HashSet<String>();
         Set<Long> meterIds = new HashSet<Long>();
         List<MeterTopologyDevice> devices = new ArrayList<MeterTopologyDevice>();
         long nextRegionId = System.currentTimeMillis();
@@ -98,6 +99,11 @@ public class MeterTopologyServiceImpl implements IMeterTopologyService
             if (region.getRegionName().length() > 64)
             {
                 throw new ServiceException("区域名称不能超过64个字符");
+            }
+            // 区域名不允许重复：前端已经拦了一道，这里防的是绕过页面直接调接口
+            if (!regionNames.add(region.getRegionName()))
+            {
+                throw new ServiceException("区域名称重复：" + region.getRegionName());
             }
             if (region.getRegionId() == null || region.getRegionId() <= 0)
             {

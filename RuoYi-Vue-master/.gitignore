@@ -42,6 +42,9 @@ nbdist/
 *.xml.versionsBackup
 *.swp
 
+# 前端页面的单独渲染入口（不带后端跑单个页面做视觉核对），不属于交付物
+ruoyi-ui/.harness/
+
 !*/build/*.java
 !*/build/*.html
 !*/build/*.xml

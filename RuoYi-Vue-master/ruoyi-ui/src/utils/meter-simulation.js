@@ -4,7 +4,7 @@ const SNAPSHOT_INTERVAL = 30000
 
 const definitions = [
   { meterId: 900001, meterCode: 'SIM-METER-001', meterName: '园区总进线电表', siteName: '模拟园区', boxName: '总配电室', slaveAddress: 250, factor: 1, scenario: 'OK' },
-  { meterId: 900002, meterCode: 'SIM-METER-002', meterName: '办公区用电表', siteName: '模拟园区', boxName: '办公区配电箱', slaveAddress: 251, factor: 0.38, scenario: 'OK' },
+  { meterId: 900002, meterCode: 'SIM-METER-002', meterName: '办公区用电表', siteName: '模拟园区', boxName: '总配电室', slaveAddress: 251, factor: 0.38, scenario: 'OK' },
   { meterId: 900003, meterCode: 'SIM-METER-003', meterName: '生产车间电表', siteName: '模拟园区', boxName: '车间配电箱', slaveAddress: 252, factor: 0.76, scenario: 'PF_LOW' },
   { meterId: 900004, meterCode: 'SIM-METER-004', meterName: '空调机房电表', siteName: '模拟园区', boxName: '机房配电箱', slaveAddress: 253, factor: 0.54, scenario: 'VOLTAGE_BAD' },
   { meterId: 900005, meterCode: 'SIM-METER-005', meterName: '仓储区用电表', siteName: '模拟园区', boxName: '仓储配电箱', slaveAddress: 254, factor: 0.29, scenario: 'OK' },

@@ -53,7 +53,16 @@ public class MeterCardController extends BaseController
     @PutMapping("/topology")
     public AjaxResult saveTopology(@RequestBody MeterTopologyLayout layout)
     {
-        return toAjax(meterTopologyService.saveTopology(layout));
+        // 拓扑表在 MASTER 库，meter / distribution_box 在 SLAVE 库。
+        // saveTopology 上开了 MASTER 事务，事务一开启连接就被钉住，方法内部再切数据源是无效的
+        // （会去 MASTER 库里找 meter 表），所以箱体那部分必须放在事务外面按 SLAVE 作用域单独走：
+        // 1) 先只读校验，撞唯一键就直接返回、什么都不写；
+        // 2) 再存区域与归属（MASTER 事务）；
+        // 3) 最后写箱体归属（SLAVE 事务）。
+        meterCardService.validateTopologyBoxChanges(layout);
+        meterTopologyService.saveTopology(layout);
+        meterCardService.applyTopologyBoxChanges(layout);
+        return toAjax(1);
     }
 
     @GetMapping("/dashboard/energy-trend")
