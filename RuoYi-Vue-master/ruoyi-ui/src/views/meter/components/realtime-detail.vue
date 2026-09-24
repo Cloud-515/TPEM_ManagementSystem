@@ -1,6 +1,7 @@
 <template>
   <el-drawer :title="detail.meterName || '设备详情'" :visible.sync="visible" size="680px" append-to-body>
     <div v-loading="loading" class="detail-content">
+      <el-alert v-if="detailFailed" title="详情加载失败，请关闭抽屉后重试" type="error" :closable="false" show-icon />
       <div v-if="detail && detail.meterId" class="detail-navigation">
         <el-button type="text" size="mini" @click="openPage('MeterEnergy')">能耗分析</el-button>
         <el-button type="text" size="mini" @click="openPage('MeterQuality')">电能质量</el-button>
@@ -11,8 +12,8 @@
         <el-tab-pane label="实时运行" name="running">
           <el-descriptions :column="2" border size="small">
             <el-descriptions-item label="设备名称">{{ detail.meterName || '--' }}</el-descriptions-item>
-            <el-descriptions-item label="设备地址">{{ detail.slaveAddress == null ? '--' : detail.slaveAddress }}</el-descriptions-item>
-            <el-descriptions-item label="站点 / 箱体">{{ detail.siteName || '--' }} / {{ detail.boxName || '--' }}</el-descriptions-item>
+            <el-descriptions-item label="设备地址">{{ formatMeterAddress(detail.slaveAddress) }}</el-descriptions-item>
+            <el-descriptions-item label="站点 / 箱体">{{ formatMeterLocation(detail) }}</el-descriptions-item>
             <el-descriptions-item label="运行状态"><el-tag size="mini" :type="getMeterStatusType(detail.statusCode)">{{ getMeterStatusLabel(detail.statusCode) }}</el-tag></el-descriptions-item>
             <el-descriptions-item label="总有功功率">{{ formatMeterNumber(detail.activePowerKw) }} kW</el-descriptions-item>
             <el-descriptions-item label="总无功功率">{{ formatMeterNumber(detail.reactivePowerKvar) }} kvar</el-descriptions-item>
@@ -48,17 +49,19 @@
 
 <script>
 import { getRealtimeDetail } from '@/api/system/meter'
-import { getMeterStatusLabel, getMeterStatusType, formatMeterNumber } from './meter-utils'
+import { getMeterStatusLabel, getMeterStatusType, formatMeterNumber, formatMeterAddress, formatMeterLocation } from './meter-utils'
 
 export default {
   name: 'RealtimeDetail',
   data() {
-    return { visible: false, loading: false, activeTab: 'running', detail: {}, requestId: 0 }
+    return { visible: false, loading: false, activeTab: 'running', detail: {}, detailFailed: false, requestId: 0 }
   },
   methods: {
     getMeterStatusLabel,
     getMeterStatusType,
     formatMeterNumber,
+    formatMeterAddress,
+    formatMeterLocation,
     open(meterId, tab = 'running') {
       this.activeTab = tab
       this.visible = true
@@ -69,9 +72,16 @@ export default {
       // 标题与内容会短暂显示 A；如果 A 的响应后到，还会把 B 的数据覆盖成 A 的。
       const requestId = ++this.requestId
       this.detail = {}
+      this.detailFailed = false
       getRealtimeDetail(meterId)
         .then(response => { if (requestId === this.requestId) this.detail = response.data || {} })
-        .catch(() => { if (requestId === this.requestId) this.detail = {} })
+        .catch(() => {
+          if (requestId !== this.requestId) return
+          // 失败时不能只留一个空对象：那样界面会变成一台"全是 -- 的设备"，
+          // 读起来像"设备没有数据"，而实际是详情没取到。
+          this.detail = {}
+          this.detailFailed = true
+        })
         .finally(() => { if (requestId === this.requestId) this.loading = false })
     },
     openPage(name, category) {

@@ -8,7 +8,10 @@ const definitions = [
   { meterId: 900003, meterCode: 'SIM-METER-003', meterName: '生产车间电表', siteName: '模拟园区', boxName: '车间配电箱', slaveAddress: 252, factor: 0.76, scenario: 'PF_LOW' },
   { meterId: 900004, meterCode: 'SIM-METER-004', meterName: '空调机房电表', siteName: '模拟园区', boxName: '机房配电箱', slaveAddress: 253, factor: 0.54, scenario: 'VOLTAGE_BAD' },
   { meterId: 900005, meterCode: 'SIM-METER-005', meterName: '仓储区用电表', siteName: '模拟园区', boxName: '仓储配电箱', slaveAddress: 254, factor: 0.29, scenario: 'OK' },
-  { meterId: 900006, meterCode: 'SIM-METER-006', meterName: '消防系统电表', siteName: '模拟园区', boxName: '消防配电箱', slaveAddress: 255, factor: 0.17, scenario: 'NODATA' }
+  { meterId: 900006, meterCode: 'SIM-METER-006', meterName: '消防系统电表', siteName: '模拟园区', boxName: '消防配电箱', slaveAddress: 255, factor: 0.17, scenario: 'NODATA' },
+  // 补一台通信故障：原来六台只覆盖了 OK / PF_LOW / VOLTAGE_BAD / NODATA，
+  // 异常列表里最该排在最前面的那一档反而没有样例，排序和配色都没法核对
+  { meterId: 900007, meterCode: 'SIM-METER-007', meterName: '泵房电表', siteName: '模拟园区', boxName: '泵房配电箱', slaveAddress: 256, factor: 0.45, scenario: 'FAULT' }
 ]
 let cachedSnapshot = null
 let cachedBucket = null
@@ -33,6 +36,8 @@ function buildMeter(definition, date) {
   if (statusCode === 'PF_LOW') powerFactorTotal = 0.42
   if (statusCode === 'VOLTAGE_BAD') { voltageA = 247.6; voltageB = 246.8; voltageC = 248.1 }
   if (statusCode === 'NODATA') { lastCollectTime = formatDate(new Date(date.getTime() - 2 * 3600000)); isOnline = 0 }
+  // 通信故障：设备不在线、最后采集停在 3 小时前，读数保留最后一次已知值（现场就是这种形态）
+  if (statusCode === 'FAULT') { lastCollectTime = formatDate(new Date(date.getTime() - 3 * 3600000)); isOnline = 0 }
   const apparentPowerKva = powerFactorTotal > 0 ? round(activePowerKw / powerFactorTotal) : null
   const reactivePowerKvar = powerFactorTotal > 0 ? round(activePowerKw * Math.tan(Math.acos(powerFactorTotal))) : null
   return {

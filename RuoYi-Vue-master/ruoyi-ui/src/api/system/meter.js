@@ -34,11 +34,6 @@ export function getDashboardEnergyTrend(range) {
   return mock || request({ url: '/system/meter/dashboard/energy-trend', method: 'get', params: { range } })
 }
 
-export function getEnergyTrend(range) {
-  const mock = simulated(() => simulatedEnergyTrend(range))
-  return mock || request({ url: '/system/meter/dashboard/energy-trend', method: 'get', params: { range } })
-}
-
 export function listRealtimeMeters(query) {
   return requestPage('/system/meter/realtime/page', query, simulatedMeterListResponse)
 }

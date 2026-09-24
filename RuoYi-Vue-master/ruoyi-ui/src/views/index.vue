@@ -86,7 +86,7 @@
               <span class="fault-dot" :class="fault.statusCode" />
               <div class="fault-info">
                 <strong>{{ fault.meterName || '未命名设备' }}</strong>
-                <span>{{ getStatusLabel(fault.statusCode) }} · {{ fault.siteName || '--' }} / {{ fault.boxName || '--' }}</span>
+                <span>{{ getStatusLabel(fault.statusCode) }} · {{ formatMeterLocation(fault) }}</span>
               </div>
               <el-button type="text" size="mini" @click="openMeter(fault)">详情</el-button>
             </div>
@@ -121,6 +121,7 @@
 import * as echarts from 'echarts'
 import resize from './dashboard/mixins/resize'
 import { listMeterCards, getDashboardEnergyTrend } from '@/api/system/meter'
+import { formatMeterLocation, formatMeterNumber, toMeterNumber, getMeterSeverityRank } from '@/views/meter/components/meter-utils'
 
 const statusMeta = [
   { code: 'OK', label: '正常', color: '#2f9e6f', tag: 'success' },
@@ -169,11 +170,12 @@ export default {
       return statusMeta.map(meta => ({ ...meta, value: this.meters.filter(item => item.statusCode === meta.code).length }))
     },
     topLoadMeters() {
-      return this.meters.filter(item => Number.isFinite(Number(item.activePowerKw)) && Number(item.activePowerKw) >= 0).sort((a, b) => Number(b.activePowerKw) - Number(a.activePowerKw)).slice(0, 10)
+      // 用 toMeterNumber 而不是 Number()：Number(null) === 0，没采到读数的设备会被当成 0 kW 混进负荷排行
+      return this.meters.filter(item => { const value = toMeterNumber(item.activePowerKw); return value !== null && value >= 0 }).sort((a, b) => toMeterNumber(b.activePowerKw) - toMeterNumber(a.activePowerKw)).slice(0, 10)
     },
     exceptions() {
-      const severity = { FAULT: 0, ABNORMAL: 1, VOLTAGE_BAD: 2, PF_LOW: 3, NODATA: 4, WAITING: 5 }
-      return this.meters.filter(item => item.statusCode !== 'OK').sort((a, b) => severity[a.statusCode] - severity[b.statusCode])
+      // 严重度顺序统一走共享表：原来首页和异常设备页各存一份，两份的 NODATA / VOLTAGE_BAD / PF_LOW 先后还不一致
+      return this.meters.filter(item => item.statusCode !== 'OK').sort((a, b) => getMeterSeverityRank(a.statusCode) - getMeterSeverityRank(b.statusCode))
     },
     visibleExceptions() {
       const exceptions = this.statusFilter ? this.exceptions.filter(item => item.statusCode === this.statusFilter) : this.exceptions
@@ -203,7 +205,9 @@ export default {
   methods: {
     startRefreshTimer() {
       this.stopRefreshTimer()
-      this.refreshTimer = setInterval(this.loadSnapshot, 15000)
+      // 自动刷新走静默模式：loadSnapshot 会置整表 loading，定时器直接调它等于每 15 秒
+      // 把整页盖上一层遮罩；叠加能耗趋势接口偏慢，看起来就是"首页一直在转圈"。
+      this.refreshTimer = setInterval(() => this.loadSnapshot({ silent: true }), 15000)
     },
     stopRefreshTimer() {
       if (this.refreshTimer) {
@@ -223,8 +227,9 @@ export default {
     async refreshDashboard() {
       await Promise.all([this.loadSnapshot(), this.loadTrend()])
     },
-    async loadSnapshot() {
-      this.loading = true
+    async loadSnapshot(options) {
+      const silent = !!(options && options.silent)
+      if (!silent) this.loading = true
       try {
         const response = await listMeterCards()
         const data = response.data || {}
@@ -233,12 +238,10 @@ export default {
         this.renderLoadChart()
         this.renderHealthChart()
       } catch (error) {
-        this.meters = []
-        this.generatedAt = ''
-        this.renderLoadChart()
-        this.renderHealthChart()
+        // 失败时保留上一次的卡片：原来这里清空 meters，一次网络抖动就把首页清成空的
+        if (!this.meters.length) this.generatedAt = ''
       } finally {
-        this.loading = false
+        if (!silent) this.loading = false
       }
     },
     async loadTrend() {
@@ -275,11 +278,11 @@ export default {
       if (!this.loadChart) return
       const data = [...this.topLoadMeters].reverse()
       this.loadChart.setOption({
-        tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' }, formatter: params => { const meter = data[params[0].dataIndex]; return `${meter.meterName}<br/>${meter.siteName || '--'} / ${meter.boxName || '--'}<br/>当前负荷：${this.formatNumber(meter.activePowerKw)} kW<br/>状态：${this.getStatusLabel(meter.statusCode)}` } },
+        tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' }, formatter: params => { const meter = data[params[0].dataIndex]; return `${meter.meterName}<br/>${formatMeterLocation(meter)}<br/>当前负荷：${this.formatNumber(meter.activePowerKw)} kW<br/>状态：${this.getStatusLabel(meter.statusCode)}` } },
         grid: { containLabel: true, left: 122, right: 40, top: 16, bottom: 30 },
         xAxis: { type: 'value', axisLabel: { color: '#718096' }, splitLine: { lineStyle: { color: '#edf2f7' } } },
         yAxis: { type: 'category', data: data.map(item => item.meterName), axisLabel: { color: '#475569', width: 105, overflow: 'truncate' }, axisLine: { show: false }, axisTick: { show: false } },
-        series: [{ name: '当前负荷', type: 'bar', barWidth: 14, itemStyle: { color: '#2586b6', borderRadius: [0, 7, 7, 0] }, data: data.map(item => Number(item.activePowerKw).toFixed(2)) }]
+        series: [{ name: '当前负荷', type: 'bar', barWidth: 14, itemStyle: { color: '#2586b6', borderRadius: [0, 7, 7, 0] }, data: data.map(item => toMeterNumber(item.activePowerKw)) }]
       }, true)
       this.loadChart.off('click')
       this.loadChart.on('click', params => this.openMeter(data[params.dataIndex]))
@@ -306,9 +309,12 @@ export default {
       return item ? item.tag : 'info'
     },
     formatNumber(value, digits = 2) {
-      const number = Number(value)
-      return Number.isFinite(number) ? number.toLocaleString('zh-CN', { maximumFractionDigits: digits }) : '--'
+      // 统一走共享口径：原来这里是 Number()，Number(null) === 0 会把"没采到"显示成 0.00
+      return formatMeterNumber(value, digits)
     },
+    // 模板里用到的都要挂到 methods 上。漏挂的后果不是"显示空白"，而是渲染直接抛
+    // TypeError、整个组件停在上一帧（曾经因此让首页一直挂着 loading 遮罩）
+    formatMeterLocation,
     openMeter(meter) {
       if (meter && meter.meterId) this.$router.push({ name: 'MeterAlarmRecord', query: { meterId: meter.meterId } })
     },

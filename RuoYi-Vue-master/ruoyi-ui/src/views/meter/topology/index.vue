@@ -38,7 +38,7 @@
           <span class="tip">进入编辑模式，可拖拽调整归属与顺序{{ dirty ? '（有未保存改动）' : '' }}</span>
         </button>
       </div>
-      <button type="button" class="ball" @click="onFabAction('collapse')">
+      <button type="button" class="ball" :title="fabOpen ? '收起操作项' : '展开操作项'" @click="onFabAction('collapse')">
         <i class="ico-open">✎</i><span class="txt-open">{{ editing ? '编辑中' : '编辑' }}</span>
         <i class="ico-close">✕</i><span class="txt-close">收起</span>
         <em v-if="dirty" class="dot" title="有未保存的改动"></em>
@@ -100,7 +100,7 @@
           <template slot-scope="scope">{{ scope.row.meterName || '未命名设备' }}</template>
         </el-table-column>
         <el-table-column label="站点 / 配电箱" min-width="180" show-overflow-tooltip>
-          <template slot-scope="scope">{{ scope.row.siteName || '--' }} / {{ scope.row.boxName || '--' }}</template>
+          <template slot-scope="scope">{{ formatMeterLocation(scope.row) }}</template>
         </el-table-column>
         <el-table-column label="地址" width="72" align="right">
           <template slot-scope="scope">{{ addressText(scope.row) }}</template>
@@ -133,40 +133,6 @@
     </div>
 
     <template v-else>
-    <section v-if="unassignedMeters.length || editing" class="region">
-      <div class="region-head">
-        <h2>未分配设备</h2>
-        <div class="stats">
-          <span><b>{{ unassignedMeters.length }}</b> 台设备</span>
-          <span class="sep"></span>
-          <span>{{ editing ? '这里是移出区域的中转区' : '尚未归入任何区域' }}</span>
-        </div>
-      </div>
-      <div class="enclosure">
-        <i class="screw tl"></i><i class="screw tr"></i><i class="screw bl"></i><i class="screw br"></i>
-        <div class="enc-head">
-          <div class="plate is-loose">
-            <span class="code">未接入配电箱</span>
-            <span class="nm">{{ unassignedMeters.length }} 台设备待分配</span>
-            <span v-if="editing" class="cnt">放入后按从站地址排序</span>
-          </div>
-        </div>
-        <div class="cavity">
-          <div class="rail is-loose"></div>
-          <!-- 顺序由后端（从站地址）决定，拖拽只改变归属，所以这里关闭内部排序，不做兑现不了的承诺 -->
-          <draggable v-if="editing" v-bind="dragTrack" :list="unassignedMeters" :group="meterGroup" :sort="false" draggable=".drag-item" class="meters drop-zone" ghost-class="drag-ghost" animation="180" @start="startAutoScroll" @end="stopAutoScroll">
-            <div v-for="meter in unassignedMeters" :key="meter.meterId" class="drag-item" :data-meter-id="meter.meterId">
-              <meter-device :meter="meter" />
-            </div>
-            <template slot="footer"><div v-if="!unassignedMeters.length" class="drop-empty">把电表拖到这里即移出区域</div></template>
-          </draggable>
-          <div v-else class="meters">
-            <meter-device v-for="meter in unassignedMeters" :key="meter.meterId" :meter="meter" @open="openRecord" />
-          </div>
-        </div>
-      </div>
-    </section>
-
     <section v-for="view in regionsView" :key="view.region.regionId" class="region">
       <div class="region-head">
         <h2>{{ view.region.regionName }}</h2>
@@ -250,6 +216,40 @@
     <div v-if="!regions.length" class="empty-state">
       <el-empty description="尚未创建拓扑区域"><el-button type="primary" @click="addRegion">创建第一个区域</el-button></el-empty>
     </div>
+
+    <section v-if="unassignedMeters.length || editing" class="region">
+      <div class="region-head">
+        <h2>未分配设备</h2>
+        <div class="stats">
+          <span><b>{{ unassignedMeters.length }}</b> 台设备</span>
+          <span class="sep"></span>
+          <span>{{ editing ? '这里是移出区域的中转区' : '尚未归入任何区域' }}</span>
+        </div>
+      </div>
+      <div class="enclosure">
+        <i class="screw tl"></i><i class="screw tr"></i><i class="screw bl"></i><i class="screw br"></i>
+        <div class="enc-head">
+          <div class="plate is-loose">
+            <span class="code">未接入配电箱</span>
+            <span class="nm">{{ unassignedMeters.length }} 台设备待分配</span>
+            <span v-if="editing" class="cnt">放入后按从站地址排序</span>
+          </div>
+        </div>
+        <div class="cavity">
+          <div class="rail is-loose"></div>
+          <!-- 顺序由后端（从站地址）决定，拖拽只改变归属，所以这里关闭内部排序，不做兑现不了的承诺 -->
+          <draggable v-if="editing" v-bind="dragTrack" :list="unassignedMeters" :group="meterGroup" :sort="false" draggable=".drag-item" class="meters drop-zone" ghost-class="drag-ghost" animation="180" @start="startAutoScroll" @end="stopAutoScroll">
+            <div v-for="meter in unassignedMeters" :key="meter.meterId" class="drag-item" :data-meter-id="meter.meterId">
+              <meter-device :meter="meter" />
+            </div>
+            <template slot="footer"><div v-if="!unassignedMeters.length" class="drop-empty">把电表拖到这里即移出区域</div></template>
+          </draggable>
+          <div v-else class="meters">
+            <meter-device v-for="meter in unassignedMeters" :key="meter.meterId" :meter="meter" @open="openRecord" />
+          </div>
+        </div>
+      </div>
+    </section>
     </template>
 
     <el-dialog title="区域名称" :visible.sync="regionDialog.visible" width="400px" append-to-body>
@@ -265,7 +265,7 @@ import draggable from 'vuedraggable'
 import RealtimeDetail from '@/views/meter/components/realtime-detail'
 import MeterDevice from '@/views/meter/components/meter-device'
 import { getMeterTopology, saveMeterTopology } from '@/api/system/meter'
-import { getMeterStatusTone, getMeterStatusLabel, getMeterStatusType, meterStatusMeta, formatMeterNumber, formatMeterAddress } from '@/views/meter/components/meter-utils'
+import { getMeterStatusTone, getMeterStatusLabel, getMeterStatusType, meterStatusMeta, formatMeterNumber, formatMeterAddress, formatMeterLocation } from '@/views/meter/components/meter-utils'
 
 const TONE_ORDER = ['ok', 'warn', 'danger', 'idle']
 const TONE_LABELS = { warn: '告警', danger: '故障', idle: '无数据' }
@@ -464,6 +464,7 @@ export default {
   },
   methods: {
     formatNumber(value) { return formatMeterNumber(value) },
+    formatMeterLocation,
     /** 悬浮球能拖到的范围：优先限制在 .app-main 里（别盖住左侧菜单），取不到就退回视口。 */
     fabHost() {
       const main = document.querySelector('.app-main')
@@ -563,7 +564,9 @@ export default {
       else if (action === 'cancel') this.cancelWithConfirm()
       else if (action === 'refresh') this.refreshWithConfirm()
       else if (action === 'toggleView') this.viewMode = this.viewMode === 'list' ? 'graph' : 'list'
-      else if (action === 'collapse') this.barCollapsed = true
+      // 切换而不是只置 true：收起后工具条虽然看不见，仍占着 .fab 的布局宽度，
+      // 鼠标不离开就收不到 mouseleave、barCollapsed 一直是 true，再点球就成了空操作
+      else if (action === 'collapse') this.barCollapsed = !this.barCollapsed
     },
     onFabEnter() { this.fabHover = true },
     onFabLeave() {

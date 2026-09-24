@@ -19,10 +19,10 @@
           <template slot-scope="scope">{{ formatRegion(scope.row) }}</template>
         </el-table-column>
         <el-table-column label="当前负荷" width="140" align="right">
-          <template slot-scope="scope">{{ formatNumber(scope.row.activePowerKw) }} kW</template>
+          <template slot-scope="scope">{{ formatMeterNumber(scope.row.activePowerKw) }} kW</template>
         </el-table-column>
         <el-table-column label="状态" width="130" align="center">
-          <template slot-scope="scope"><el-tag :type="statusType(scope.row.statusCode)" size="small">{{ getMeterStatusLabel(scope.row.statusCode) }}</el-tag></template>
+          <template slot-scope="scope"><el-tag :type="getMeterStatusType(scope.row.statusCode)" size="small">{{ getMeterStatusLabel(scope.row.statusCode) }}</el-tag></template>
         </el-table-column>
         <el-table-column prop="lastCollectTime" label="最后采集时间" width="180" />
         <el-table-column label="操作" width="90" align="center">
@@ -36,9 +36,7 @@
 
 <script>
 import { listMeterCards } from '@/api/system/meter'
-import { getMeterStatusLabel, meterStatusMeta, formatMeterNumber } from '@/views/meter/components/meter-utils'
-
-const severity = { FAULT: 0, ABNORMAL: 1, NODATA: 2, VOLTAGE_BAD: 3, PF_LOW: 4, WAITING: 5 }
+import { getMeterStatusLabel, getMeterStatusType, formatMeterNumber, formatMeterLocation, getMeterSeverityRank } from '@/views/meter/components/meter-utils'
 
 export default {
   name: 'MeterExceptionDevices',
@@ -47,22 +45,25 @@ export default {
   },
   created() { this.loadDevices() },
   methods: {
+    getMeterStatusLabel,
+    getMeterStatusType,
+    formatMeterNumber,
     async loadDevices() {
       this.loading = true
       try {
         const response = await listMeterCards()
-        const dashboard = (response.data || response).dashboard || []
-        this.exceptions = dashboard.filter(item => item.statusCode !== 'OK').sort((a, b) => (severity[a.statusCode] || 99) - (severity[b.statusCode] || 99))
+        const payload = response.data || response
+        // /cards 把设备分成互斥两组：dashboard = 仪表盘扫描串口，toolbar = 外部串口。
+        // 本页写的是"全部设备"，只取 dashboard 会让外部串口的表永远查不到（而它在能耗页的下拉里是可选的）。
+        const all = Array.from(new Map([...(payload.dashboard || []), ...(payload.toolbar || [])].map(item => [String(item.meterId), item])).values())
+        this.exceptions = all.filter(item => item.statusCode !== 'OK').sort((a, b) => getMeterSeverityRank(a.statusCode) - getMeterSeverityRank(b.statusCode))
         this.emptyMessage = '当前没有异常设备'
       } catch (error) {
         this.exceptions = []
         this.emptyMessage = '异常设备加载失败'
       } finally { this.loading = false }
     },
-    formatRegion(device) { return [device.siteName, device.boxName].filter(Boolean).join(' / ') || '--' },
-    statusType(code) { return (meterStatusMeta[code] || {}).type || 'info' },
-    getMeterStatusLabel(code) { return getMeterStatusLabel(code) },
-    formatNumber(value) { return formatMeterNumber(value) },
+    formatRegion(device) { return formatMeterLocation(device) },
     openRecord(device) {
       if (device && device.meterId) this.$router.push({ name: 'MeterAlarmRecord', query: { meterId: device.meterId, from: 'exceptions' } })
     }

@@ -30,7 +30,7 @@
     <el-divider content-position="left">所选设备累计读数</el-divider>
     <el-table :data="selectedMeter ? [selectedMeter] : []" border>
       <el-table-column label="设备名称" prop="meterName" min-width="180" />
-      <el-table-column label="位置" min-width="180"><template slot-scope="scope">{{ scope.row.siteName || '--' }} / {{ scope.row.boxName || '--' }}</template></el-table-column>
+      <el-table-column label="位置" min-width="180"><template slot-scope="scope">{{ formatMeterLocation(scope.row) }}</template></el-table-column>
       <el-table-column label="正向有功累计" width="160" align="right"><template slot-scope="scope">{{ formatMeterNumber(scope.row.forwardActiveEnergy) }} kWh</template></el-table-column>
       <el-table-column label="反向有功累计" width="160" align="right"><template slot-scope="scope">{{ formatMeterNumber(scope.row.reverseActiveEnergy) }} kWh</template></el-table-column>
       <el-table-column label="正向无功累计" width="160" align="right"><template slot-scope="scope">{{ formatMeterNumber(scope.row.forwardReactiveEnergy) }} kvarh</template></el-table-column>
@@ -46,7 +46,7 @@ import * as echarts from 'echarts'
 import resize from '@/views/dashboard/mixins/resize'
 import { getEnergyAnalysis, listMeterCards } from '@/api/system/meter'
 import RealtimeDetail from '../components/realtime-detail'
-import { formatMeterNumber } from '../components/meter-utils'
+import { formatMeterNumber, toKilowatts, toMeterNumber, formatMeterLocation } from '../components/meter-utils'
 
 function formatDate(date) {
   const pad = value => String(value).padStart(2, '0')
@@ -62,15 +62,16 @@ export default {
   },
   computed: {
     energyKpis() {
-      const powers = this.powerPoints.map(item => Number(item.activePowerTotal) / 1000).filter(Number.isFinite)
+      // 缺失读数要排除在统计之外：Number(null) === 0 会让它以 0 参与峰值与均值（把均值拉低、把 0 当成一个采样点）
+      const powers = this.powerPoints.map(item => toKilowatts(item.activePowerTotal)).filter(value => value !== null)
       const summary = this.energySummary || {}
-      const start = Number(summary.startForwardActiveEnergy)
-      const end = Number(summary.endForwardActiveEnergy)
-      const interval = summary.valid ? Number(summary.intervalEnergy) : null
+      const start = toMeterNumber(summary.startForwardActiveEnergy)
+      const end = toMeterNumber(summary.endForwardActiveEnergy)
+      const interval = summary.valid ? toMeterNumber(summary.intervalEnergy) : null
       const peak = powers.length ? Math.max(...powers) : null
       const average = powers.length ? powers.reduce((sum, value) => sum + value, 0) / powers.length : null
       const compactEnergy = value => {
-        if (!Number.isFinite(value)) return { value: '--', unit: 'kWh', fullValue: '' }
+        if (value === null || !Number.isFinite(value)) return { value: '--', unit: 'kWh', fullValue: '' }
         if (Math.abs(value) >= 1000000) return { value: this.formatMeterNumber(value / 1000000, 2), unit: 'GWh', fullValue: `${this.formatMeterNumber(value)} kWh` }
         if (Math.abs(value) >= 10000) return { value: this.formatMeterNumber(value / 10000, 2), unit: '万 kWh', fullValue: `${this.formatMeterNumber(value)} kWh` }
         return { value: this.formatMeterNumber(value), unit: 'kWh', fullValue: `${this.formatMeterNumber(value)} kWh` }
@@ -88,17 +89,25 @@ export default {
       ]
     }
   },
-  mounted() { this.powerChart = echarts.init(this.$refs.powerChart); this.meterId = this.$route.query.meterId ? Number(this.$route.query.meterId) : undefined; this.applyPreset() },
+  mounted() {
+    this.powerChart = echarts.init(this.$refs.powerChart)
+    this.meterId = this.$route.query.meterId ? Number(this.$route.query.meterId) : undefined
+    this.applyPreset()
+    // 设备列表只在这里拉一次：它跟时间范围无关，原来挂在 applyPreset 里，每切一次预设就重拉一份全量卡片
+    this.loadMeters()
+  },
   watch: { '$route.query.meterId'(meterId) { if (meterId) { this.meterId = Number(meterId); this.loadAnalysis() } } },
   beforeDestroy() { if (this.powerChart) this.powerChart.dispose() },
   methods: {
     formatMeterNumber,
+    formatMeterLocation,
+    toKilowatts,
     resize() { if (this.powerChart) this.powerChart.resize() },
     applyPreset() {
       const hours = this.rangePreset === '24h' ? 24 : this.rangePreset === '7d' ? 168 : 720
       const end = new Date(); const begin = new Date(end.getTime() - hours * 3600000)
       this.dateRange = [formatDate(begin), formatDate(end)]
-      this.loadMeters()
+      this.loadAnalysis()
     },
     handleDateRangeChange() { this.rangePreset = ''; this.loadAnalysis() },
     handleMeterChange() {
@@ -112,9 +121,17 @@ export default {
     loadMeters() {
       listMeterCards().then(response => {
         const data = response.data || {}; this.meterOptions = [...(data.dashboard || []), ...(data.toolbar || [])]
-        if (!this.meterId && this.meterOptions.length) this.meterId = this.meterOptions[0].meterId
-        this.loadAnalysis()
-      }).catch(() => { this.meterOptions = []; this.meterId = undefined; this.selectedMeter = null; this.analysisError = '无法加载设备列表' })
+        // 只有"本来没选设备、现在有了默认值"才需要补一次分析；
+        // 否则（从路由带了 meterId 进来）会和 applyPreset 里的那次重复。
+        if (!this.meterId && this.meterOptions.length) {
+          this.meterId = this.meterOptions[0].meterId
+          this.loadAnalysis()
+        }
+      }).catch(() => {
+        // 不在这里清 meterId：设备列表拉失败不该把用户已经选好的设备一起丢掉
+        this.meterOptions = []
+        this.analysisError = '无法加载设备列表'
+      })
     },
     loadAnalysis() {
       if (!this.meterId || !this.dateRange || this.dateRange.length !== 2) return
@@ -122,7 +139,6 @@ export default {
       this.analysisLoading = true
       this.analysisError = ''
       const params = { meterId: this.meterId, beginTime: this.dateRange[0], endTime: this.dateRange[1] }
-      this.energySummary = null
       this.energySummary = null
       getEnergyAnalysis(params).then(response => {
         if (requestId !== this.analysisRequestId) return
@@ -157,7 +173,7 @@ export default {
         grid: { containLabel: true, left: 64, right: 30, top: 28, bottom: 48 },
         xAxis: { type: 'category', boundaryGap: false, data: this.powerPoints.map(item => item.dataCollectTime), axisLabel: { color: '#718096', hideOverlap: true, formatter: value => value ? value.slice(5, 16) : '' }, axisLine: { lineStyle: { color: '#d9e2ec' } } },
         yAxis: { type: 'value', name: 'kW', nameLocation: 'end', nameGap: 12, nameTextStyle: { color: '#718096' }, axisLabel: { color: '#718096' }, splitLine: { lineStyle: { color: '#edf2f7' } } },
-        series: [{ name: '总有功功率', type: 'line', smooth: true, symbol: 'circle', symbolSize: 6, lineStyle: { width: 2 }, areaStyle: { color: 'rgba(22,119,168,.14)' }, data: this.powerPoints.map(item => Number.isFinite(Number(item.activePowerTotal)) ? Number(item.activePowerTotal) / 1000 : null) }]
+        series: [{ name: '总有功功率', type: 'line', smooth: true, symbol: 'circle', symbolSize: 6, lineStyle: { width: 2 }, areaStyle: { color: 'rgba(22,119,168,.14)' }, data: this.powerPoints.map(item => toKilowatts(item.activePowerTotal)) }]
       }, true)
     },
     showDetail(row) { this.$refs.detail.open(row.meterId, 'energy') }

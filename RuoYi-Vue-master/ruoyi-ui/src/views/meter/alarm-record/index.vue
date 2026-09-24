@@ -11,7 +11,7 @@
     <el-card class="record-card" shadow="never">
       <div slot="header" class="section-header">
         <span>设备告警状态</span>
-        <el-tag v-if="record" :type="statusType(record.statusCode)" size="small">{{ record.statusText }}</el-tag>
+        <el-tag v-if="record" :type="getMeterStatusType(record.statusCode)" size="small">{{ record.statusText }}</el-tag>
       </div>
       <el-table v-if="record" :data="[record]" border>
         <el-table-column prop="region" label="所属区域" min-width="220">
@@ -37,16 +37,16 @@
           <el-descriptions-item label="配电箱">{{ detail.boxName || '--' }}</el-descriptions-item>
           <el-descriptions-item label="从站地址">{{ detail.slaveAddress || '--' }}</el-descriptions-item>
           <el-descriptions-item label="设备状态">
-            <el-tag :type="statusType(detail.statusCode)" size="small">{{ detail.statusText || getMeterStatusLabel(detail.statusCode) }}</el-tag>
+            <el-tag :type="getMeterStatusType(detail.statusCode)" size="small">{{ detail.statusText || getMeterStatusLabel(detail.statusCode) }}</el-tag>
           </el-descriptions-item>
-          <el-descriptions-item label="有功功率">{{ formatNumber(detail.activePowerKw) }} kW</el-descriptions-item>
-          <el-descriptions-item label="无功功率">{{ formatNumber(detail.reactivePowerKvar) }} kvar</el-descriptions-item>
-          <el-descriptions-item label="A相电流">{{ formatNumber(detail.currentA) }} A</el-descriptions-item>
-          <el-descriptions-item label="B相电流">{{ formatNumber(detail.currentB) }} A</el-descriptions-item>
-          <el-descriptions-item label="C相电流">{{ formatNumber(detail.currentC) }} A</el-descriptions-item>
-          <el-descriptions-item label="功率因数">{{ formatNumber(detail.powerFactorTotal) }}</el-descriptions-item>
-          <el-descriptions-item label="累计正向电能">{{ formatNumber(detail.forwardActiveEnergy) }} kWh</el-descriptions-item>
-          <el-descriptions-item label="累计反向电能">{{ formatNumber(detail.reverseActiveEnergy) }} kWh</el-descriptions-item>
+          <el-descriptions-item label="有功功率">{{ formatMeterNumber(detail.activePowerKw) }} kW</el-descriptions-item>
+          <el-descriptions-item label="无功功率">{{ formatMeterNumber(detail.reactivePowerKvar) }} kvar</el-descriptions-item>
+          <el-descriptions-item label="A相电流">{{ formatMeterNumber(detail.currentA) }} A</el-descriptions-item>
+          <el-descriptions-item label="B相电流">{{ formatMeterNumber(detail.currentB) }} A</el-descriptions-item>
+          <el-descriptions-item label="C相电流">{{ formatMeterNumber(detail.currentC) }} A</el-descriptions-item>
+          <el-descriptions-item label="功率因数">{{ formatMeterNumber(detail.powerFactorTotal) }}</el-descriptions-item>
+          <el-descriptions-item label="累计正向电能">{{ formatMeterNumber(detail.forwardActiveEnergy) }} kWh</el-descriptions-item>
+          <el-descriptions-item label="累计反向电能">{{ formatMeterNumber(detail.reverseActiveEnergy) }} kWh</el-descriptions-item>
           <el-descriptions-item label="最后采集时间">{{ detail.lastCollectTime || '--' }}</el-descriptions-item>
         </el-descriptions>
       </template>
@@ -57,7 +57,7 @@
 
 <script>
 import { getRealtimeDetail } from '@/api/system/meter'
-import { getMeterStatusLabel, meterStatusMeta } from '@/views/meter/components/meter-utils'
+import { getMeterStatusLabel, getMeterStatusType, formatMeterNumber, formatMeterLocation } from '@/views/meter/components/meter-utils'
 
 export default {
   name: 'MeterAlarmRecord',
@@ -68,7 +68,7 @@ export default {
     record() {
       if (!this.detail || this.detail.statusCode === 'OK') return null
       return {
-        region: [this.detail.siteName, this.detail.boxName].filter(Boolean).join(' / ') || '--',
+        region: formatMeterLocation(this.detail),
         description: this.detail.statusText || getMeterStatusLabel(this.detail.statusCode),
         occurredAt: this.detail.lastCollectTime || '--',
         statusCode: this.detail.statusCode,
@@ -94,9 +94,9 @@ export default {
         this.emptyMessage = '告警状态加载失败'
       } finally { this.loading = false }
     },
-    statusType(code) { return (meterStatusMeta[code] || {}).type || 'info' },
-    getMeterStatusLabel(code) { return getMeterStatusLabel(code) },
-    formatNumber(value) { return value === null || value === undefined || value === '' ? '--' : Number(value).toLocaleString('zh-CN', { maximumFractionDigits: 3 }) }
+    getMeterStatusLabel,
+    getMeterStatusType,
+    formatMeterNumber
   }
 }
 </script>

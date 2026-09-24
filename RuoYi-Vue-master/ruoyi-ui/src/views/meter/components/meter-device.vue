@@ -57,6 +57,8 @@ import {
   getMeterStatusTone,
   formatMeterNumber,
   formatMeterAddress,
+  hasMeterValue,
+  toMeterNumber,
   VOLTAGE_PHASE_MIN,
   VOLTAGE_PHASE_MAX,
   POWER_FACTOR_REFERENCE
@@ -82,15 +84,15 @@ export default {
     },
     // 没有采到实时功率时，屏上留占位符而不是 0 —— 0 会被读成"负载为零"。
     isOff() {
-      return this.meter.activePowerKw === null || this.meter.activePowerKw === undefined
+      return !hasMeterValue(this.meter.activePowerKw)
     },
     pfBelowReference() {
-      const pf = this.meter.powerFactorTotal
-      return pf !== null && pf !== undefined && Number(pf) < POWER_FACTOR_REFERENCE
+      const pf = toMeterNumber(this.meter.powerFactorTotal)
+      return pf !== null && pf < POWER_FACTOR_REFERENCE
     },
     pfPercent() {
-      const pf = Number(this.meter.powerFactorTotal)
-      return Number.isFinite(pf) ? Math.min(100, Math.max(0, pf * 100)) : 0
+      const pf = toMeterNumber(this.meter.powerFactorTotal)
+      return pf === null ? 0 : Math.min(100, Math.max(0, pf * 100))
     },
     reference() {
       return POWER_FACTOR_REFERENCE
@@ -110,26 +112,22 @@ export default {
       return formatMeterNumber(value)
     },
     value(raw) {
-      if (raw === null || raw === undefined) return '----'
+      if (!hasMeterValue(raw)) return '----'
       const number = Number(raw)
       return Number.isFinite(number) ? number.toFixed(2) : '----'
     },
     phaseCells(keys, min, max) {
       const outOfRange = min !== undefined && keys.some(key => {
-        const raw = this.meter[key]
-        if (raw === null || raw === undefined) return false
-        const number = Number(raw)
-        return Number.isFinite(number) && (number < min || number > max)
+        const number = toMeterNumber(this.meter[key])
+        return number !== null && (number < min || number > max)
       })
       return keys.map((key, index) => {
-        const raw = this.meter[key]
-        const number = Number(raw)
-        const hasValue = raw !== null && raw !== undefined && Number.isFinite(number)
+        const number = toMeterNumber(this.meter[key])
         return {
           key,
           label: PHASES[index],
-          text: hasValue ? number.toFixed(1) : '----',
-          warn: outOfRange && hasValue
+          text: number === null ? '----' : number.toFixed(1),
+          warn: outOfRange && number !== null
         }
       })
     },

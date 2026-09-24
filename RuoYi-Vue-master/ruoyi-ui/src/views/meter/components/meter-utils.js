@@ -31,23 +31,58 @@ export function getMeterStatusTone(code) {
 }
 
 /**
+ * 异常列表的严重度顺序：通信故障 → 数值异常 → 无数据 → 电压异常 → 功率因数低 → 等待采集。
+ * 首页与异常设备页原本各存一份，且两份的 NODATA / VOLTAGE_BAD / PF_LOW 先后互相矛盾，
+ * 同一条异常在两页排的位置不一样；统一到这里，改顺序只改这一处。
+ */
+export const meterSeverityOrder = { FAULT: 0, ABNORMAL: 1, NODATA: 2, VOLTAGE_BAD: 3, PF_LOW: 4, WAITING: 5 }
+
+/** 排序等级，0 表示最该先看；未知状态码排到最后。注意 0 是有效等级，兜底不能写成 `rank || 99`。 */
+export function getMeterSeverityRank(code) {
+  const rank = meterSeverityOrder[code]
+  return rank === undefined ? 99 : rank
+}
+
+/**
+ * 判断"有没有值"。null / undefined / 空串都算没有 —— 注意 Number(null) === 0、Number('') === 0，
+ * 只挡 null/undefined 会让空串悄悄变成 0（显示成"零负载"、被判成低功率因数）。
+ */
+export function hasMeterValue(value) {
+  return value !== null && value !== undefined && value !== ''
+}
+
+/** 转成数值，没有值或转不出有限数就返回 null（不是 0）。 */
+export function toMeterNumber(value) {
+  if (!hasMeterValue(value)) return null
+  const number = Number(value)
+  return Number.isFinite(number) ? number : null
+}
+
+/** 有功总功率 W → kW；没有值返回 null，这样图表上是断点而不是"0 kW"。 */
+export function toKilowatts(value) {
+  const number = toMeterNumber(value)
+  return number === null ? null : number / 1000
+}
+
+/**
  * 格式化电表数值。
  * 入参为空（null / undefined / 空串）时返回占位符 —— 不能让 Number(null) === 0 把"没有数据"
  * 显示成 0.00，那会被读成"负载为零"而不是"没采到"。
  */
 export function formatMeterNumber(value, digits = 2) {
-  if (value === null || value === undefined || value === '') return '--'
-  const number = Number(value)
-  return Number.isFinite(number) ? number.toLocaleString('zh-CN', { maximumFractionDigits: digits }) : '--'
-}
-
-export function formatMeterDateTime(value) {
-  return value || '--'
+  const number = toMeterNumber(value)
+  return number === null ? '--' : number.toLocaleString('zh-CN', { maximumFractionDigits: digits })
 }
 
 /** 从站地址按两位显示（现场习惯），没有值就留占位符。 */
 export function formatMeterAddress(value) {
-  return value === null || value === undefined || value === '' ? '--' : String(value).padStart(2, '0')
+  return hasMeterValue(value) ? String(value).padStart(2, '0') : '--'
+}
+
+/** 位置文案：站点 / 箱体，缺哪段都不会剩下孤零零的分隔符。 */
+export function formatMeterLocation(meter, placeholder = '--') {
+  const parts = [meter && meter.siteName, meter && meter.boxName].filter(hasMeterValue)
+  return parts.length ? parts.join(' / ') : placeholder
 }
 
 export const meterQualityRiskLabels = {
@@ -60,9 +95,9 @@ export const meterQualityRiskLabels = {
   CURRENT_UNBALANCE_EXCEEDED: '电流不平衡'
 }
 
-function isBelow(value, threshold) { return value !== null && value !== undefined && Number(value) < threshold }
-function isAbove(value, threshold) { return value !== null && value !== undefined && Number(value) > threshold }
-function isOutside(value, min, max) { return value !== null && value !== undefined && (Number(value) < min || Number(value) > max) }
+function isBelow(value, threshold) { const number = toMeterNumber(value); return number !== null && number < threshold }
+function isAbove(value, threshold) { const number = toMeterNumber(value); return number !== null && number > threshold }
+function isOutside(value, min, max) { const number = toMeterNumber(value); return number !== null && (number < min || number > max) }
 
 export function getMeterQualityRiskCodes(meter) {
   if (Array.isArray(meter && meter.qualityRiskCodes)) return meter.qualityRiskCodes

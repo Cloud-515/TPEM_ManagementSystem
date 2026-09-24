@@ -62,7 +62,7 @@
 import * as echarts from 'echarts'
 import resize from '@/views/dashboard/mixins/resize'
 import { listMeterCards, getHistoryTrend, listRealtimeHistory, listEnergyHistory, listQualityHistory } from '@/api/system/meter'
-import { formatMeterNumber } from '../components/meter-utils'
+import { formatMeterNumber, toKilowatts, formatMeterLocation } from '../components/meter-utils'
 
 const categoryInfo = {
   realtime: { title: '运行状态趋势', description: '查看设备运行参数在所选时间范围内的变化情况。' },
@@ -75,7 +75,7 @@ export default {
   mixins: [resize],
   data() {
     return {
-      loading: false, trendLoading: false, optionsLoading: false, total: 0, historyList: [], trendPoints: [], meterOptions: [], selectedQuickRange: '', activeCategory: 'realtime', dateRange: [], primaryChart: null, trendRequestId: 0,
+      loading: false, trendLoading: false, optionsLoading: false, total: 0, historyList: [], trendPoints: [], meterOptions: [], selectedQuickRange: '', activeCategory: 'realtime', dateRange: [], primaryChart: null, trendRequestId: 0, detailRequestId: 0, detailFailed: false,
       queryParams: { pageNum: 1, pageSize: 20, meterId: undefined },
       pickerOptions: { disabledDate(time) { return time.getTime() > Date.now() } },
       quickRanges: [{ key: '1h', label: '近1小时', hours: 1 }, { key: '6h', label: '近6小时', hours: 6 }, { key: '24h', label: '近24小时', hours: 24 }, { key: '7d', label: '近7天', hours: 168 }, { key: '30d', label: '近30天', hours: 720 }]
@@ -86,7 +86,10 @@ export default {
     selectedMeter() { return this.meterOptions.find(item => String(item.meterId) === this.queryParams.meterId) },
     trendTitle() { return (categoryInfo[this.activeCategory] || {}).title || '趋势' },
     trendDescription() { return (categoryInfo[this.activeCategory] || {}).description || '' },
-    emptyText() { return this.canQuery ? '当前条件下没有原始采集记录' : '请选择设备与时间范围后查询' }
+    emptyText() {
+      if (this.detailFailed) return '明细加载失败，请重试'
+      return this.canQuery ? '当前条件下没有原始采集记录' : '请选择设备与时间范围后查询'
+    }
   },
   created() { this.restoreQuery(); this.loadMeterOptions().then(() => { if (this.canQuery) this.handleQuery() }) },
   mounted() { this.primaryChart = echarts.init(this.$refs.primaryChart); this.renderTrend() },
@@ -103,9 +106,9 @@ export default {
   },
   methods: {
     formatMeterNumber,
-    toKilowatts(value) { const number = Number(value); return Number.isFinite(number) ? number / 1000 : null },
+    toKilowatts,
     resize() { if (this.primaryChart) this.primaryChart.resize() },
-    meterLabel(meter) { return meter ? `${meter.meterName || '未命名设备'}（${meter.meterCode || meter.slaveAddress || '--'}）· ${meter.siteName || '--'} / ${meter.boxName || '--'}` : '--' },
+    meterLabel(meter) { return meter ? `${meter.meterName || '未命名设备'}（${meter.meterCode || meter.slaveAddress || '--'}）· ${formatMeterLocation(meter)}` : '--' },
     loadMeterOptions() {
       this.optionsLoading = true
       const timeout = new Promise((resolve, reject) => setTimeout(() => reject(new Error('设备列表加载超时')), 10000))
@@ -178,7 +181,27 @@ export default {
         if (requestId === this.trendRequestId) this.trendLoading = false
       })
     },
-    loadDetails() { if (!this.canQuery) return; this.loading = true; const request = this.activeCategory === 'energy' ? listEnergyHistory : this.activeCategory === 'quality' ? listQualityHistory : listRealtimeHistory; request({ ...this.buildParams(), pageNum: this.queryParams.pageNum, pageSize: this.queryParams.pageSize }).then(response => { this.historyList = response.rows || []; this.total = response.total || 0 }).catch(() => { this.historyList = []; this.total = 0 }).finally(() => { this.loading = false }) },
+    // 明细也要请求归属校验（趋势那条本来就有）。没有守卫时，快速切设备/时间段/翻页，
+    // 先发的旧请求后到就会覆盖新结果：表头与总数已按新条件更新，表格里却是上一台设备的记录。
+    loadDetails() {
+      if (!this.canQuery) return
+      const requestId = ++this.detailRequestId
+      this.loading = true
+      this.detailFailed = false
+      const request = this.activeCategory === 'energy' ? listEnergyHistory : this.activeCategory === 'quality' ? listQualityHistory : listRealtimeHistory
+      request({ ...this.buildParams(), pageNum: this.queryParams.pageNum, pageSize: this.queryParams.pageSize }).then(response => {
+        if (requestId !== this.detailRequestId) return
+        this.historyList = response.rows || []
+        this.total = response.total || 0
+      }).catch(() => {
+        if (requestId !== this.detailRequestId) return
+        this.historyList = []
+        this.total = 0
+        this.detailFailed = true
+      }).finally(() => {
+        if (requestId === this.detailRequestId) this.loading = false
+      })
+    },
     renderTrend() {
       if (!this.primaryChart) return
       const labels = this.trendPoints.map(item => item.dataCollectTime)

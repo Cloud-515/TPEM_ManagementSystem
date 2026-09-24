@@ -29,10 +29,11 @@
       </el-form-item>
     </el-form>
 
+    <el-alert v-if="listFailed" class="list-failed" title="数据刷新失败，下表是上一次成功获取的结果" type="warning" :closable="false" show-icon />
     <el-table v-loading="loading" :data="meterList" border>
       <el-table-column label="设备名称" prop="meterName" min-width="155" show-overflow-tooltip />
       <el-table-column label="位置" min-width="190" show-overflow-tooltip>
-        <template slot-scope="scope">{{ scope.row.siteName || '--' }} / {{ scope.row.boxName || '--' }}</template>
+        <template slot-scope="scope">{{ formatMeterLocation(scope.row) }}</template>
       </el-table-column>
       <el-table-column label="通信状态" width="115">
         <template slot-scope="scope"><el-tag size="mini" :type="getMeterStatusType(scope.row.statusCode)">{{ getMeterStatusLabel(scope.row.statusCode) }}</el-tag></template>
@@ -57,7 +58,7 @@
 <script>
 import { listRealtimeMeters } from '@/api/system/meter'
 import RealtimeDetail from '../components/realtime-detail'
-import { meterStatusMeta, getMeterStatusLabel, getMeterStatusType, formatMeterNumber } from '../components/meter-utils'
+import { meterStatusMeta, getMeterStatusLabel, getMeterStatusType, formatMeterNumber, formatMeterLocation } from '../components/meter-utils'
 
 export default {
   name: 'MeterRealtime',
@@ -67,6 +68,8 @@ export default {
       loading: false,
       total: 0,
       meterList: [],
+      listFailed: false,
+      listRequestId: 0,
       refreshTimer: null,
       // draft 是输入框里的草稿，queryParams 是"已经生效"的查询条件。
       // 两者分开的原由：15 秒自动刷新用的是 queryParams，
@@ -99,7 +102,8 @@ export default {
   methods: {
     startRefreshTimer() {
       this.stopRefreshTimer()
-      this.refreshTimer = setInterval(this.getList, 15000)
+      // 自动刷新走静默模式：不动整表 loading 遮罩，否则每 15 秒闪一次
+      this.refreshTimer = setInterval(() => this.getList({ silent: true }), 15000)
     },
     stopRefreshTimer() {
       if (this.refreshTimer) {
@@ -110,15 +114,25 @@ export default {
     getMeterStatusLabel,
     getMeterStatusType,
     formatMeterNumber,
-    getList() {
-      this.loading = true
+    formatMeterLocation,
+    getList(options) {
+      const silent = !!(options && options.silent)
+      const requestId = ++this.listRequestId
+      if (!silent) this.loading = true
       listRealtimeMeters(this.queryParams).then(response => {
+        // 自动刷新与手动翻页/搜索可能并发，先发的旧响应不能覆盖后到的新结果
+        if (requestId !== this.listRequestId) return
         this.meterList = response.rows || []
         this.total = response.total || 0
+        this.listFailed = false
       }).catch(() => {
-        this.meterList = []
-        this.total = 0
-      }).finally(() => { this.loading = false })
+        if (requestId !== this.listRequestId) return
+        // 失败时保留上一次的数据：原来这里清空列表并把 total 置 0，
+        // 一次网络抖动就会让页面变成"没有设备"、分页器也跟着消失，15 秒后又自己回来。
+        this.listFailed = true
+      }).finally(() => {
+        if (!silent && requestId === this.listRequestId) this.loading = false
+      })
     },
     handleQuery() {
       this.queryParams = { ...this.queryParams, ...this.draft, pageNum: 1 }
