@@ -2,7 +2,7 @@
   <div class="app-container realtime-page">
     <section class="page-heading">
       <div>
-        <h2>实时运行</h2>
+        <h1>实时运行</h1>
         <p>查看仪表最新通信状态、负荷与三相电流</p>
       </div>
       <span class="refresh-note">每 15 秒自动刷新</span>
@@ -152,5 +152,5 @@ export default {
 
 <style scoped lang="scss">
 .page-heading { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 20px; }
-.page-heading h2 { margin: 0; color: #172b4d; font-size: 20px; }.page-heading p, .refresh-note { margin: 6px 0 0; color: #718096; font-size: 13px; }.refresh-note { padding-top: 3px; }
+.page-heading h1 { margin: 0 0 4px; color: #1f2937; font-size: 24px; font-weight: 600; }.page-heading p, .refresh-note { margin: 6px 0 0; color: #718096; font-size: 13px; }.refresh-note { padding-top: 3px; }
 </style>

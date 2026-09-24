@@ -61,12 +61,17 @@ spring:
                         multi-statement-allow: true
 
 # 热泵遥测数据库，仅供热泵监控只读查询。
+# 口令解析顺序：HEAT_PUMP_DB_PASSWORD → METER_TELEMETRY_DB_PASSWORD → 本地开发默认值。
+# 原先只写 ${HEAT_PUMP_DB_PASSWORD} 且没有兜底：本机两个环境变量都没设时，Spring 会把
+# 未解析的占位符当字面量交给 PG，连接直接认证失败 —— 表现为热泵监控页每次都报
+# "系统内部错误"，而日志里看不出跟口令有关（这两个库是同一个 PG 实例、同一套账号，
+# 所以两个变量名共用一个值；生产环境设任意一个即可）。
 heat-pump:
   datasource:
     driver-class-name: org.postgresql.Driver
     jdbc-url: ${HEAT_PUMP_DB_URL:jdbc:postgresql://localhost:11451/ma}
     username: ${HEAT_PUMP_DB_USERNAME:postgres}
-    password: ${HEAT_PUMP_DB_PASSWORD}
+    password: ${HEAT_PUMP_DB_PASSWORD:${METER_TELEMETRY_DB_PASSWORD:12345}}
     maximum-pool-size: 5
     minimum-idle: 1
     connection-timeout: 3000
@@ -79,7 +84,7 @@ meter-telemetry:
     driver-class-name: org.postgresql.Driver
     jdbc-url: ${METER_TELEMETRY_DB_URL:jdbc:postgresql://localhost:11451/ma}
     username: ${METER_TELEMETRY_DB_USERNAME:postgres}
-    password: ${METER_TELEMETRY_DB_PASSWORD}
+    password: ${METER_TELEMETRY_DB_PASSWORD:${HEAT_PUMP_DB_PASSWORD:12345}}
     maximum-pool-size: 5
     minimum-idle: 1
     connection-timeout: 3000

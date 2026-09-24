@@ -112,11 +112,13 @@ export const constantRoutes = [
         meta: { title: '设备拓扑图', icon: 'guide' }
       },
       {
-        path: 'alarm-record',
+        // 设备号放进路径而不是 query：tagsView 按 path 去重（store/modules/tagsView.js:40），
+        // 路径不同才能同时开多台设备的标签页，标签标题也才能各自显示设备名
+        path: 'alarm-record/:meterId?',
         component: () => import('@/views/meter/alarm-record'),
         name: 'MeterAlarmRecord',
         hidden: true,
-        meta: { title: '设备告警状态', activeMenu: '/meter/realtime' }
+        meta: { title: '设备详情', activeMenu: '/meter/realtime' }
       },
       {
         path: 'exception-devices',

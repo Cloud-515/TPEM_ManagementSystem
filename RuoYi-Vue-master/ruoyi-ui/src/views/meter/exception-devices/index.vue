@@ -65,7 +65,7 @@ export default {
     },
     formatRegion(device) { return formatMeterLocation(device) },
     openRecord(device) {
-      if (device && device.meterId) this.$router.push({ name: 'MeterAlarmRecord', query: { meterId: device.meterId, from: 'exceptions' } })
+      if (device && device.meterId) this.$router.push({ name: 'MeterAlarmRecord', params: { meterId: device.meterId }, query: { from: 'exceptions' } })
     }
   }
 }
@@ -74,7 +74,7 @@ export default {
 <style scoped>
 .exception-devices-page { min-height: calc(100vh - 84px); background: #f5f7fa; }
 .page-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 18px; }
-.page-heading h1 { margin: 0 0 6px; color: #1f2937; font-size: 24px; }
+.page-heading h1 { margin: 0 0 4px; color: #1f2937; font-size: 24px; font-weight: 600; }
 .page-heading p { margin: 0; color: #718096; font-size: 13px; }
 .section-header { display: flex; align-items: center; justify-content: space-between; color: #1f2937; font-size: 16px; font-weight: 600; }
 .count-label { color: #718096; font-size: 13px; font-weight: 400; }

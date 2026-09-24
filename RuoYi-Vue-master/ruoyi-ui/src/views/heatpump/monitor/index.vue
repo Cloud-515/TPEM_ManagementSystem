@@ -1,10 +1,10 @@
 <template>
   <div class="app-container heat-pump-monitor">
     <el-row :gutter="16" class="summary-row">
-      <el-col :xs="12" :sm="6"><div class="summary-item"><span>模块总数</span><strong>{{ overview.total_count || 0 }}</strong></div></el-col>
-      <el-col :xs="12" :sm="6"><div class="summary-item online"><span>在线模块</span><strong>{{ overview.online_count || 0 }}</strong></div></el-col>
-      <el-col :xs="12" :sm="6"><div class="summary-item offline"><span>离线模块</span><strong>{{ overview.offline_count || 0 }}</strong></div></el-col>
-      <el-col :xs="12" :sm="6"><div class="summary-item alarm"><span>活动告警</span><strong>{{ overview.alarm_count || 0 }}</strong></div></el-col>
+      <el-col :xs="12" :sm="6"><div class="tpem-card is-slate"><div class="tpem-card-head"><i class="tpem-icon el-icon-cpu"></i><span>模块总数</span></div><b class="tpem-value">{{ overview.total_count || 0 }}<small>个</small></b></div></el-col>
+      <el-col :xs="12" :sm="6"><div class="tpem-card is-teal"><div class="tpem-card-head"><i class="tpem-icon el-icon-monitor"></i><span>在线模块</span></div><b class="tpem-value">{{ overview.online_count || 0 }}<small>个</small></b></div></el-col>
+      <el-col :xs="12" :sm="6"><div class="tpem-card is-slate"><div class="tpem-card-head"><i class="tpem-icon el-icon-guide"></i><span>离线模块</span></div><b class="tpem-value">{{ overview.offline_count || 0 }}<small>个</small></b></div></el-col>
+      <el-col :xs="12" :sm="6"><div class="tpem-card" :class="{ 'is-warn': overview.alarm_count > 0 }"><div class="tpem-card-head"><i class="tpem-icon el-icon-warning-outline"></i><span>活动告警</span></div><b class="tpem-value">{{ overview.alarm_count || 0 }}<small>条</small></b></div></el-col>
     </el-row>
 
     <el-alert v-if="loadFailed" class="load-failed" title="数据刷新失败，下表是上一次成功获取的结果" type="warning" :closable="false" show-icon />

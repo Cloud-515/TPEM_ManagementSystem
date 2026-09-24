@@ -1,7 +1,10 @@
 <template>
   <div class="app-container quality-page">
-    <section class="page-heading"><div><h2>电能质量</h2><p>基于最新采集数据识别电压、功率因数、谐波与不平衡风险</p></div><el-switch v-model="showAll" active-text="显示全部设备" @change="handleQuery" /></section>
-    <el-row :gutter="16" class="risk-row"><el-col v-for="item in riskKpis" :key="item.label" :xs="12" :md="6"><div class="risk-kpi" :class="item.type"><span>{{ item.label }}</span><strong>{{ item.value }}</strong><small v-if="item.value !== '--'">台</small></div></el-col></el-row>
+    <section class="page-heading"><div><h1>电能质量</h1><p>基于最新采集数据识别电压、功率因数、谐波与不平衡风险</p></div><el-switch v-model="showAll" active-text="显示全部设备" @change="handleQuery" /></section>
+    <!-- 用 auto-fit 自适应栅格：el-col 只写 :xs/:md 时，768~991px 之间没有规则命中会退化成一行一张 -->
+    <div class="tpem-card-row risk-row">
+      <div v-for="item in riskKpis" :key="item.label" class="tpem-card" :class="[item.tone, { 'is-warn': item.warn }]"><div class="tpem-card-head"><i class="tpem-icon" :class="item.icon"></i><span>{{ item.label }}</span></div><b class="tpem-value">{{ item.value }}<small v-if="item.value !== '--'">台</small></b></div>
+    </div>
     <el-form ref="queryForm" :model="queryParams" size="small" :inline="true" label-width="68px">
       <el-form-item label="设备名称" prop="meterName"><el-input v-model="queryParams.meterName" placeholder="请输入设备名称" clearable @keyup.enter.native="handleQuery" /></el-form-item>
       <el-form-item label="站点" prop="siteName"><el-input v-model="queryParams.siteName" placeholder="请输入站点" clearable @keyup.enter.native="handleQuery" /></el-form-item>
@@ -36,14 +39,15 @@ export default {
     return { loading: false, total: 0, meterList: [], showAll, stats: null, listFailed: false, queryParams: { pageNum: 1, pageSize: 20, meterName: undefined, siteName: undefined, boxName: undefined, riskOnly: !showAll } }
   },
   computed: {
-    // 统计接口没拿到数据时显示 --，不能显示 0：0 的含义是"确实没有风险设备"，两者混了会误导判断
+    // 统计卡：统一走 .tpem-card（图标 + 顶部主题色），有异常就把整卡标黄
     riskKpis() {
       const count = key => (this.stats ? (this.stats[key] || 0) : '--')
+      const value = key => count(key)
       return [
-        { label: '状态异常', value: count('statusAbnormalCount'), type: 'danger' },
-        { label: '功率因数低', value: count('powerFactorLowCount'), type: 'warning' },
-        { label: 'THD 超限', value: count('thdExceededCount'), type: 'warning' },
-        { label: '不平衡超限', value: count('unbalanceExceededCount'), type: 'info' }
+        { label: '状态异常', icon: 'el-icon-warning-outline', tone: 'is-amber', value: value('statusAbnormalCount'), warn: Number(value('statusAbnormalCount')) > 0 },
+        { label: '功率因数低', icon: 'el-icon-pie-chart', tone: 'is-teal', value: value('powerFactorLowCount'), warn: Number(value('powerFactorLowCount')) > 0 },
+        { label: 'THD 超限', icon: 'el-icon-data-line', tone: 'is-violet', value: value('thdExceededCount'), warn: Number(value('thdExceededCount')) > 0 },
+        { label: '不平衡超限', icon: 'el-icon-odometer', tone: 'is-slate', value: value('unbalanceExceededCount'), warn: Number(value('unbalanceExceededCount')) > 0 }
       ]
     },
     emptyText() {
@@ -106,5 +110,5 @@ export default {
 </script>
 
 <style scoped lang="scss">
-.page-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 18px; }.page-heading h2 { margin: 0; color: #172b4d; font-size: 20px; }.page-heading p { margin: 6px 0 0; color: #718096; font-size: 13px; }.risk-row { margin-bottom: 16px; }.risk-kpi { padding: 15px; border: 1px solid #e3edf3; border-left: 4px solid #7d92a8; border-radius: 7px; background: #fafcff; }.risk-kpi.warning { border-left-color: #d98b1d; }.risk-kpi.danger { border-left-color: #c94747; }.risk-kpi span { color: #718096; font-size: 12px; }.risk-kpi strong { margin: 0 5px 0 10px; color: #263a54; font-size: 24px; }.risk-kpi small { color: #718096; }
+.page-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 18px; }.page-heading h1 { margin: 0 0 4px; color: #1f2937; font-size: 24px; font-weight: 600; }.page-heading p { margin: 6px 0 0; color: #718096; font-size: 13px; }.risk-row { margin-bottom: 16px; }.risk-kpi { padding: 15px; border: 1px solid #e3edf3; border-left: 4px solid #7d92a8; border-radius: 7px; background: #fafcff; }.risk-kpi.warning { border-left-color: #d98b1d; }.risk-kpi.danger { border-left-color: #c94747; }.risk-kpi span { color: #718096; font-size: 12px; }.risk-kpi strong { margin: 0 5px 0 10px; color: #263a54; font-size: 24px; }.risk-kpi small { color: #718096; }
 </style>

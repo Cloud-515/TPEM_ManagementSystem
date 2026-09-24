@@ -1,0 +1,148 @@
+/**
+ * TPEM 统一排版与卡片样式
+ *
+ * 背景：各页面的"页面标题"有四种写法（h1-24 / h2-20 / h2-连字号都没声明 / h1-26），
+ * "统计数字卡"有四种长相（纯白卡 / 左侧色条 / 图标卡 / 顶部色条），数值字号有五种（21~28 与 clamp）。
+ * 这里只定三件事：页面标题、统计卡、数值对齐。各页套类名即可，模板结构基本不动。
+ *
+ * 数值对齐**不用等宽字体**：Consolas / Cascadia / JetBrains Mono 这类等宽字体的 0 中间有斜杠或点，
+ * 现场读数里 0 很常见，看着别扭。改用界面字体 + tabular-nums（等宽数字特性），
+ * 小数点照样对齐，字形与页面其它文字一致。
+ */
+
+/* ── 页面标题 ───────────────────────────────────── */
+.tpem-title {
+  margin: 0 0 4px;
+  color: #1f2937;
+  font-size: 24px;
+  font-weight: 600;
+}
+
+.tpem-sub {
+  margin: 0;
+  color: #718096;
+  font-size: 13px;
+}
+
+/* ── 统计卡 ─────────────────────────────────────── */
+/* auto-fit + minmax：不写断点就自适应（宽了一行多张、窄了自动减列） */
+.tpem-card-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(158px, 1fr));
+  gap: 12px;
+}
+
+.tpem-card {
+  position: relative;
+  min-width: 0;
+  padding: 13px 15px 14px;
+  overflow: hidden;
+  background: #fff;
+  border: 1px solid #e3edf3;
+  border-radius: 8px;
+  transition: box-shadow .18s ease, transform .18s ease;
+}
+
+.tpem-card:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 16px rgba(15, 23, 42, .08);
+}
+
+/* 顶部 3px 主题色，替掉"一整片白"的平淡感 */
+.tpem-card::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 3px;
+  background: #cbd8e4;
+}
+
+.tpem-card.is-blue::before { background: linear-gradient(90deg, #2586b6, #4fb0d8); }
+.tpem-card.is-indigo::before { background: linear-gradient(90deg, #5a6cb5, #8b9ae0); }
+.tpem-card.is-teal::before { background: linear-gradient(90deg, #2f9e6f, #6ec39a); }
+.tpem-card.is-amber::before { background: linear-gradient(90deg, #d98b1d, #eab765); }
+.tpem-card.is-violet::before { background: linear-gradient(90deg, #7b61b5, #a693d8); }
+.tpem-card.is-slate::before { background: linear-gradient(90deg, #64798f, #9aabbd); }
+
+/* 越限 / 告警状态：整卡转琥珀色 */
+.tpem-card.is-warn {
+  border-color: #f0d9a8;
+  background: #fffdf6;
+}
+
+.tpem-card.is-warn::before { background: linear-gradient(90deg, #d98b1d, #f0c987); }
+.tpem-card.is-warn .tpem-value { color: #b8791a; }
+
+.tpem-card-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.tpem-card-head > span {
+  color: #718096;
+  font-size: 12px;
+}
+
+.tpem-icon {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  color: #fff;
+  font-size: 12px;
+  background: #9aabbd;
+  border-radius: 6px;
+}
+
+.tpem-card.is-blue .tpem-icon { background: #2586b6; }
+.tpem-card.is-indigo .tpem-icon { background: #5a6cb5; }
+.tpem-card.is-teal .tpem-icon { background: #2f9e6f; }
+.tpem-card.is-amber .tpem-icon { background: #d98b1d; }
+.tpem-card.is-violet .tpem-icon { background: #7b61b5; }
+
+/* 数值：全站同一字号与对齐方式 */
+.tpem-value {
+  display: block;
+  margin-top: 9px;
+  color: #243b53;
+  font-size: 24px;
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+
+.tpem-value small {
+  margin-left: 4px;
+  color: #718096;
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.tpem-hint {
+  display: block;
+  margin-top: 5px;
+  color: #9aa8b8;
+  font-size: 11px;
+}
+
+/* ── 数值对齐（表格、描述列表里的读数） ─────────────── */
+/* 只调数字宽度特性，不动字体族：等宽字体的 0 带斜杠，现场读数里 0 太多 */
+.tpem-num {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+
+/* 所有表格单元格统一等宽数字：一条规则覆盖全部页面，不必逐列加类。
+   tabular-nums 只影响数字，文字与中文不受影响 */
+.el-table td .cell,
+.el-table th .cell {
+  font-variant-numeric: tabular-nums;
+}
+
+/* 表格里的数值列统一右对齐（Element 的 align="right" 已覆盖大部分，这里兜底表头） */
+.el-table th.is-right .cell {
+  font-variant-numeric: tabular-nums;
+}

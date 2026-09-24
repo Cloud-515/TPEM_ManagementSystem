@@ -1,7 +1,7 @@
 <template>
   <div class="app-container energy-page" v-loading="analysisLoading">
     <section class="page-heading">
-      <div><h2>能耗分析</h2><p>按设备和时间范围分析累计电能与运行功率</p></div>
+      <div><h1>能耗分析</h1><p>按设备和时间范围分析累计电能与运行功率</p></div>
       <el-radio-group v-model="rangePreset" size="small" @change="applyPreset"><el-radio-button label="24h">24小时</el-radio-button><el-radio-button label="7d">7天</el-radio-button><el-radio-button label="30d">30天</el-radio-button></el-radio-group>
     </section>
 
@@ -17,9 +17,10 @@
 
     <el-alert v-if="analysisError" :title="analysisError" type="warning" :closable="false" show-icon />
 
-    <el-row :gutter="16" class="kpi-row">
-      <el-col v-for="item in energyKpis" :key="item.label" :xs="12" :md="4"><div class="energy-kpi"><span>{{ item.label }}</span><el-tooltip :content="item.fullValue" placement="top" :disabled="!item.fullValue"><div class="energy-value"><strong>{{ item.value }}</strong><small>{{ item.unit }}</small></div></el-tooltip></div></el-col>
-    </el-row>
+    <!-- 用 auto-fit 自适应栅格：el-col 只写 :xs/:md 时，768~991px 之间没有规则命中会退化成一行一张 -->
+    <div class="tpem-card-row kpi-row">
+      <div v-for="item in energyKpis" :key="item.label" class="tpem-card" :class="item.tone"><div class="tpem-card-head"><i class="tpem-icon" :class="item.icon"></i><span>{{ item.label }}</span></div><el-tooltip :content="item.fullValue" placement="top" :disabled="!item.fullValue"><b class="tpem-value">{{ item.value }}<small>{{ item.unit }}</small></b></el-tooltip></div>
+    </div>
 
     <section class="chart-panel">
       <div class="panel-header"><div><h3>总有功功率趋势</h3><p>所选设备在当前时间范围内的采集功率</p></div><span class="unit-label">单位：kW</span></div>
@@ -80,12 +81,12 @@ export default {
       const endEnergy = compactEnergy(end)
       const intervalEnergy = compactEnergy(interval)
       return [
-        { label: '起始累计电能', ...startEnergy },
-        { label: '结束累计电能', ...endEnergy },
-        { label: '区间用电量', ...intervalEnergy },
-        { label: '峰值功率', value: this.formatMeterNumber(peak), unit: 'kW', fullValue: '' },
-        { label: '平均功率', value: this.formatMeterNumber(average), unit: 'kW', fullValue: '' },
-        { label: '有效功率点', value: powers.length || '--', unit: '个', fullValue: '' }
+        { label: '起始累计电能', icon: 'el-icon-odometer', tone: 'is-blue', ...startEnergy },
+        { label: '结束累计电能', icon: 'el-icon-odometer', tone: 'is-blue', ...endEnergy },
+        { label: '区间用电量', icon: 'el-icon-coin', tone: 'is-indigo', ...intervalEnergy },
+        { label: '峰值功率', icon: 'el-icon-data-line', tone: 'is-violet', value: this.formatMeterNumber(peak), unit: 'kW', fullValue: '' },
+        { label: '平均功率', icon: 'el-icon-data-line', tone: 'is-teal', value: this.formatMeterNumber(average), unit: 'kW', fullValue: '' },
+        { label: '有效功率点', icon: 'el-icon-pie-chart', tone: 'is-slate', value: powers.length || '--', unit: '个', fullValue: '' }
       ]
     }
   },
@@ -184,14 +185,15 @@ export default {
 <style scoped lang="scss">
 .energy-page { min-height: 100%; }
 .page-heading, .panel-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
-.page-heading h2, .panel-header h3 { margin: 0; color: #243b53; }
+.page-heading h1 { margin: 0 0 4px; color: #1f2937; font-size: 24px; font-weight: 600; }
+.panel-header h3 { margin: 0; color: #243b53; }
 .page-heading p, .panel-header p, .unit-label { margin: 6px 0 0; color: #718096; font-size: 13px; }
 .filter-form { margin: 20px 0 12px; }
 .kpi-row { margin: 16px 0; }
 .energy-kpi { min-height: 104px; padding: 20px; overflow: hidden; background: #fff; border: 1px solid #e6edf3; border-radius: 6px; }
 .energy-kpi span { display: block; color: #718096; font-size: 13px; }
 .energy-value { display: flex; align-items: baseline; gap: 6px; margin-top: 10px; cursor: default; white-space: nowrap; }
-.energy-kpi strong { color: #243b53; font-family: Consolas, Monaco, monospace; font-size: clamp(18px, 2vw, 24px); font-variant-numeric: tabular-nums; line-height: 1.25; }
+.energy-kpi strong { color: #243b53; font-variant-numeric: tabular-nums; font-size: clamp(18px, 2vw, 24px); font-variant-numeric: tabular-nums; line-height: 1.25; }
 .energy-kpi small { flex: 0 0 auto; color: #718096; font-size: 13px; }
 .chart-panel { position: relative; padding: 20px; background: #fff; border: 1px solid #e6edf3; border-radius: 6px; }
 .trend-chart { height: 320px; }

@@ -316,7 +316,8 @@ export default {
     // TypeError、整个组件停在上一帧（曾经因此让首页一直挂着 loading 遮罩）
     formatMeterLocation,
     openMeter(meter) {
-      if (meter && meter.meterId) this.$router.push({ name: 'MeterAlarmRecord', query: { meterId: meter.meterId } })
+      // 设备号走路径参数：这样每台设备在标签栏里是独立的一页，可以同时开多台
+      if (meter && meter.meterId) this.$router.push({ name: 'MeterAlarmRecord', params: { meterId: meter.meterId } })
     },
     openExceptionDevices() {
       this.$router.push({ name: 'MeterExceptionDevices' })
@@ -332,7 +333,7 @@ export default {
 .energy-dashboard { min-height: 100%; padding: 24px; background: #f5f7fa; color: #1e293b; }
 .dashboard-header { display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 22px; }
 .eyebrow { color: #1677a8; font-size: 11px; font-weight: 700; letter-spacing: 1.4px; }
-h1 { margin: 5px 0; font-size: 26px; font-weight: 650; } h2 { margin: 0; font-size: 16px; } p { margin: 5px 0 0; color: #718096; font-size: 13px; }
+h1 { margin: 5px 0; color: #1f2937; font-size: 24px; font-weight: 600; } h2 { margin: 0; font-size: 16px; } p { margin: 5px 0 0; color: #718096; font-size: 13px; }
 .header-actions { display: flex; align-items: center; gap: 14px; } .update-time { color: #718096; font-size: 12px; }
 .metric-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; margin-bottom: 20px; }
 .metric-card { display: flex; width: 100%; min-height: 112px; align-items: center; gap: 14px; padding: 18px; color: inherit; border: 1px solid #e8eef4; border-radius: 10px; background: #fff; box-shadow: 0 2px 8px rgba(15, 23, 42, .035); cursor: pointer; font: inherit; text-align: left; transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease; }

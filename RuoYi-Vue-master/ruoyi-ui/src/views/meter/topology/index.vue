@@ -952,7 +952,7 @@ export default {
 <style scoped>
 .topology-page { min-height: calc(100vh - 84px); background: #f5f7fa; }
 .page-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 18px; }
-.page-heading h1 { margin: 0 0 6px; color: #1f2937; font-size: 24px; }
+.page-heading h1 { margin: 0 0 4px; color: #1f2937; font-size: 24px; font-weight: 600; }
 .page-heading p { margin: 0; color: #718096; font-size: 13px; }
 .toolbar { display: flex; gap: 8px; }
 .edit-tools { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 16px; padding: 10px 14px; color: #587083; border: 1px solid #dceaf1; border-radius: 8px; background: #edf8fc; font-size: 13px; line-height: 20px; }
@@ -988,7 +988,7 @@ export default {
 .enc-head.is-handle:active { cursor: grabbing; }
 .plate { display: inline-flex; align-items: baseline; gap: 10px; padding: 6px 12px; border: 1px solid #c4cfda; border-radius: 5px; background: linear-gradient(180deg, #fff, #eef3f8); box-shadow: inset 0 1px 0 #fff, 0 1px 2px rgba(15, 23, 42, .1); }
 .plate .grip { color: #8b98a5; font-size: 13px; letter-spacing: -1px; }
-.plate .code { color: #26343f; font-family: "Cascadia Mono", Consolas, "Courier New", monospace; font-size: 13.5px; font-weight: 700; letter-spacing: .6px; }
+.plate .code { color: #26343f; font-variant-numeric: tabular-nums; font-size: 13.5px; font-weight: 700; letter-spacing: .6px; }
 .plate .nm { color: #5d6d7e; font-size: 12.5px; }
 .plate .cnt { color: #8b98a5; font-size: 12px; }
 .plate.is-loose .code { color: #7c8896; }

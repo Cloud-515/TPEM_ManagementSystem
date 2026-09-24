@@ -63,7 +63,10 @@ export default {
 .simulation-banner {
   position: sticky;
   top: 0;
-  z-index: 2001;
+  /* z-index 要低于侧栏（RuoYi 的 .sidebar-container 是 1001）：
+     原来是 2001，侧栏作为抽屉拉出时横幅反而盖在侧栏上，看着像"没让位、互相遮挡"。
+     窗口宽度低于 992px 时侧栏是覆盖式抽屉、内容不位移，横幅只能靠层级关系被正常盖住。 */
+  z-index: 9;
   padding: 9px 16px;
   background: #fdf6ec;
   border-bottom: 1px solid #f5dab1;

@@ -1,7 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <configuration>
-    <!-- 日志存放路径 -->
-	<property name="log.path" value="/home/ruoyi/logs" />
+    <!-- 日志存放路径：必须是绝对路径（含盘符）。原来写 /home/ruoyi/logs 属于"相对当前盘符"，
+	     在 Windows 上从 C 盘工作目录启动（IDEA 默认如此）会去写 C:\home\ruoyi\logs，
+	     非管理员建不出该目录，logback 静默降级成只输出控制台 —— 于是报错提示
+	     "具体原因见服务端日志"，而日志文件根本没生成。 -->
+	<property name="log.path" value="E:/home/ruoyi/logs" />
     <!-- 日志输出格式 -->
 	<property name="log.pattern" value="%d{HH:mm:ss.SSS} [%thread] %-5level %logger{20} - [%method,%line] - %msg%n" />
 

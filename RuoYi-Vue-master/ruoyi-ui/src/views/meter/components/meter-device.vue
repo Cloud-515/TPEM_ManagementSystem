@@ -191,9 +191,9 @@ export default {
   background: linear-gradient(118deg, rgba(255, 255, 255, .13) 0%, rgba(255, 255, 255, .035) 26%, rgba(255, 255, 255, 0) 48%);
 }
 .lcd-p { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; padding-bottom: 8px; border-bottom: 1px solid rgba(127, 240, 192, .15); }
-.lcd-p .v { color: #7ff0c0; font-family: "Cascadia Mono", Consolas, "Courier New", monospace; font-size: 27px; font-weight: 700; line-height: 1; letter-spacing: .5px; text-shadow: 0 0 9px rgba(127, 240, 192, .5); }
+.lcd-p .v { color: #7ff0c0; font-variant-numeric: tabular-nums; font-size: 27px; font-weight: 700; line-height: 1; letter-spacing: .5px; text-shadow: 0 0 9px rgba(127, 240, 192, .5); }
 .lcd-p .u { color: #5aa98a; font-size: 11.5px; letter-spacing: .3px; }
-.lcd-row { display: grid; grid-template-columns: 32px repeat(3, 1fr); gap: 9px; margin-top: 9px; font-family: "Cascadia Mono", Consolas, "Courier New", monospace; font-size: 12px; }
+.lcd-row { display: grid; grid-template-columns: 32px repeat(3, 1fr); gap: 9px; margin-top: 9px; font-variant-numeric: tabular-nums; font-size: 12px; }
 .lcd-row .rl { color: #4a9c7d; font-size: 10px; letter-spacing: .3px; }
 .lcd-row .cell { display: flex; align-items: baseline; gap: 5px; }
 .lcd-row .cell i { color: #5fb894; font-style: normal; font-size: 10px; }
@@ -217,7 +217,7 @@ export default {
 .m-pf .track u { position: absolute; top: -3px; bottom: -3px; width: 1.5px; background: #e6edf5; opacity: .8; }
 .m-pf .ref { flex: none; color: #6b7784; font-size: 10.5px; }
 
-.m-foot { display: flex; align-items: center; gap: 9px; margin-top: 10px; padding-left: 2px; color: #8b98a6; font-family: "Cascadia Mono", Consolas, "Courier New", monospace; font-size: 10.5px; letter-spacing: .2px; }
+.m-foot { display: flex; align-items: center; gap: 9px; margin-top: 10px; padding-left: 2px; color: #8b98a6; font-variant-numeric: tabular-nums; font-size: 10.5px; letter-spacing: .2px; }
 .m-foot .sp { flex: 1; }
 .m-keys { display: flex; gap: 3px; }
 .m-keys i { display: grid; place-items: center; min-width: 19px; height: 13px; padding: 0 3px; color: #adb9c6; border-radius: 2.5px; background: linear-gradient(180deg, #4d5763, #343d48); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .22), 0 1px 1px rgba(0, 0, 0, .45); font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; font-size: 8px; font-style: normal; letter-spacing: .3px; }
