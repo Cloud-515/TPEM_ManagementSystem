@@ -186,15 +186,10 @@ export default {
 .energy-page { min-height: 100%; }
 .page-heading, .panel-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .page-heading h1 { margin: 0 0 4px; color: #1f2937; font-size: 24px; font-weight: 600; }
-.panel-header h3 { margin: 0; color: #243b53; }
+.panel-header h3 { margin: 0; color: #243b53; font-size: 15px; }
 .page-heading p, .panel-header p, .unit-label { margin: 6px 0 0; color: #718096; font-size: 13px; }
 .filter-form { margin: 20px 0 12px; }
 .kpi-row { margin: 16px 0; }
-.energy-kpi { min-height: 104px; padding: 20px; overflow: hidden; background: #fff; border: 1px solid #e6edf3; border-radius: 6px; }
-.energy-kpi span { display: block; color: #718096; font-size: 13px; }
-.energy-value { display: flex; align-items: baseline; gap: 6px; margin-top: 10px; cursor: default; white-space: nowrap; }
-.energy-kpi strong { color: #243b53; font-variant-numeric: tabular-nums; font-size: clamp(18px, 2vw, 24px); font-variant-numeric: tabular-nums; line-height: 1.25; }
-.energy-kpi small { flex: 0 0 auto; color: #718096; font-size: 13px; }
 .chart-panel { position: relative; padding: 20px; background: #fff; border: 1px solid #e6edf3; border-radius: 6px; }
 .trend-chart { height: 320px; }
 .chart-empty { position: absolute; inset: 100px 0 0; text-align: center; color: #718096; }

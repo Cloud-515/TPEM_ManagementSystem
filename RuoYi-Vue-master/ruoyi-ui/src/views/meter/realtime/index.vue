@@ -30,7 +30,7 @@
     </el-form>
 
     <el-alert v-if="listFailed" class="list-failed" title="数据刷新失败，下表是上一次成功获取的结果" type="warning" :closable="false" show-icon />
-    <el-table v-loading="loading" :data="meterList" border>
+    <el-table v-loading="loading" :data="meterList" border @sort-change="handleSortChange">
       <el-table-column label="设备名称" prop="meterName" min-width="155" show-overflow-tooltip />
       <el-table-column label="位置" min-width="190" show-overflow-tooltip>
         <template slot-scope="scope">{{ formatMeterLocation(scope.row) }}</template>
@@ -38,13 +38,13 @@
       <el-table-column label="通信状态" width="115">
         <template slot-scope="scope"><el-tag size="mini" :type="getMeterStatusType(scope.row.statusCode)">{{ getMeterStatusLabel(scope.row.statusCode) }}</el-tag></template>
       </el-table-column>
-      <el-table-column label="总有功功率" width="135" align="right">
+      <el-table-column label="总有功功率" prop="activePowerTotal" sortable="custom" width="135" align="right">
         <template slot-scope="scope">{{ formatMeterNumber(scope.row.activePowerKw) }} kW</template>
       </el-table-column>
-      <el-table-column label="A相电流" width="110" align="right"><template slot-scope="scope">{{ formatMeterNumber(scope.row.currentA) }} A</template></el-table-column>
-      <el-table-column label="B相电流" width="110" align="right"><template slot-scope="scope">{{ formatMeterNumber(scope.row.currentB) }} A</template></el-table-column>
-      <el-table-column label="C相电流" width="110" align="right"><template slot-scope="scope">{{ formatMeterNumber(scope.row.currentC) }} A</template></el-table-column>
-      <el-table-column label="最新采集时间" prop="lastCollectTime" min-width="165" />
+      <el-table-column label="A相电流" prop="currentA" sortable="custom" width="110" align="right"><template slot-scope="scope">{{ formatMeterNumber(scope.row.currentA) }} A</template></el-table-column>
+      <el-table-column label="B相电流" prop="currentB" sortable="custom" width="110" align="right"><template slot-scope="scope">{{ formatMeterNumber(scope.row.currentB) }} A</template></el-table-column>
+      <el-table-column label="C相电流" prop="currentC" sortable="custom" width="110" align="right"><template slot-scope="scope">{{ formatMeterNumber(scope.row.currentC) }} A</template></el-table-column>
+      <el-table-column label="最新采集时间" prop="collectTime" sortable="custom" min-width="165"><template slot-scope="scope">{{ scope.row.lastCollectTime }}</template></el-table-column>
       <el-table-column label="操作" width="80" fixed="right" align="center">
         <template slot-scope="scope"><el-button size="mini" type="text" @click="showDetail(scope.row)">详情</el-button></template>
       </el-table-column>
@@ -75,7 +75,7 @@ export default {
       // 两者分开的原由：15 秒自动刷新用的是 queryParams，
       // 原来输入框直接绑 queryParams，打了字但没点搜索，下一次自动刷新就会按未提交的条件过滤列表。
       draft: { meterName: undefined, siteName: undefined, boxName: undefined, statusCode: undefined },
-      queryParams: { pageNum: 1, pageSize: 10, meterName: undefined, siteName: undefined, boxName: undefined, statusCode: undefined }
+      queryParams: { pageNum: 1, pageSize: 10, meterName: undefined, siteName: undefined, boxName: undefined, statusCode: undefined, orderByColumn: undefined, isAsc: undefined }
     }
   },
   computed: {
@@ -115,6 +115,13 @@ export default {
     getMeterStatusType,
     formatMeterNumber,
     formatMeterLocation,
+    /** 表头排序：把列与方向交给后端（库字段的驼峰形式），并回到第一页 */
+    handleSortChange({ prop, order }) {
+      this.queryParams.orderByColumn = order ? prop : undefined
+      this.queryParams.isAsc = order === 'ascending' ? 'asc' : order === 'descending' ? 'desc' : undefined
+      this.queryParams.pageNum = 1
+      this.getList()
+    },
     getList(options) {
       const silent = !!(options && options.silent)
       const requestId = ++this.listRequestId

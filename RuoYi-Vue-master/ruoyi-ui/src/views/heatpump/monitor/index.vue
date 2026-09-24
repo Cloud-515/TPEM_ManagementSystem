@@ -153,12 +153,6 @@ export default {
 
 <style scoped>
 .summary-row { margin-bottom: 20px; }
-.summary-item { min-height: 86px; padding: 16px; border: 1px solid #dcdfe6; border-left: 4px solid #409eff; background: #fff; }
-.summary-item span { display: block; color: #606266; font-size: 14px; }
-.summary-item strong { display: block; margin-top: 8px; font-size: 28px; color: #303133; }
-.summary-item.online { border-left-color: #67c23a; }
-.summary-item.offline { border-left-color: #909399; }
-.summary-item.alarm { border-left-color: #f56c6c; }
 .query-form { margin-bottom: 12px; }
 .history-panel { padding: 8px 24px 16px; }
 .history-title { display: block; margin-bottom: 10px; color: #303133; }

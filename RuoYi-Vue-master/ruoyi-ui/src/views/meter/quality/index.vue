@@ -110,5 +110,5 @@ export default {
 </script>
 
 <style scoped lang="scss">
-.page-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 18px; }.page-heading h1 { margin: 0 0 4px; color: #1f2937; font-size: 24px; font-weight: 600; }.page-heading p { margin: 6px 0 0; color: #718096; font-size: 13px; }.risk-row { margin-bottom: 16px; }.risk-kpi { padding: 15px; border: 1px solid #e3edf3; border-left: 4px solid #7d92a8; border-radius: 7px; background: #fafcff; }.risk-kpi.warning { border-left-color: #d98b1d; }.risk-kpi.danger { border-left-color: #c94747; }.risk-kpi span { color: #718096; font-size: 12px; }.risk-kpi strong { margin: 0 5px 0 10px; color: #263a54; font-size: 24px; }.risk-kpi small { color: #718096; }
+.page-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 18px; }.page-heading h1 { margin: 0 0 4px; color: #1f2937; font-size: 24px; font-weight: 600; }.page-heading p { margin: 6px 0 0; color: #718096; font-size: 13px; }.risk-row { margin-bottom: 16px; }
 </style>

@@ -14,17 +14,17 @@
         <span class="count-label">{{ exceptions.length }} 台</span>
       </div>
       <el-table v-if="exceptions.length" :data="exceptions" border>
-        <el-table-column prop="meterName" label="设备名称" min-width="180" show-overflow-tooltip />
+        <el-table-column prop="meterName" label="设备名称" min-width="180" sortable show-overflow-tooltip />
         <el-table-column label="所属区域" min-width="220" show-overflow-tooltip>
           <template slot-scope="scope">{{ formatRegion(scope.row) }}</template>
         </el-table-column>
-        <el-table-column label="当前负荷" width="140" align="right">
+        <el-table-column label="当前负荷" prop="activePowerKw" width="140" align="right" sortable>
           <template slot-scope="scope">{{ formatMeterNumber(scope.row.activePowerKw) }} kW</template>
         </el-table-column>
         <el-table-column label="状态" width="130" align="center">
           <template slot-scope="scope"><el-tag :type="getMeterStatusType(scope.row.statusCode)" size="small">{{ getMeterStatusLabel(scope.row.statusCode) }}</el-tag></template>
         </el-table-column>
-        <el-table-column prop="lastCollectTime" label="最后采集时间" width="180" />
+        <el-table-column prop="lastCollectTime" label="最后采集时间" width="180" sortable />
         <el-table-column label="操作" width="90" align="center">
           <template slot-scope="scope"><el-button type="text" size="mini" @click="openRecord(scope.row)">详情</el-button></template>
         </el-table-column>
