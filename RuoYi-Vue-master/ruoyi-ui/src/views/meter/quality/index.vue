@@ -43,10 +43,14 @@ export default {
     riskKpis() {
       const count = key => (this.stats ? (this.stats[key] || 0) : '--')
       const value = key => count(key)
+      // 正常 = 总数 - 有风险的台数。原来只给四个异常分类数，看不出"一共多少台、几台正常"
+      const normal = this.stats ? Math.max(0, Number(value('totalCount')) - Number(value('riskCount'))) : '--'
       return [
+        { label: '监测总数', icon: 'el-icon-monitor', tone: 'is-blue', value: value('totalCount') },
+        { label: '正常', icon: 'el-icon-circle-check', tone: 'is-teal', value: normal },
         { label: '状态异常', icon: 'el-icon-warning-outline', tone: 'is-amber', value: value('statusAbnormalCount'), warn: Number(value('statusAbnormalCount')) > 0 },
-        { label: '功率因数低', icon: 'el-icon-pie-chart', tone: 'is-teal', value: value('powerFactorLowCount'), warn: Number(value('powerFactorLowCount')) > 0 },
-        { label: 'THD 超限', icon: 'el-icon-data-line', tone: 'is-violet', value: value('thdExceededCount'), warn: Number(value('thdExceededCount')) > 0 },
+        { label: '功率因数低', icon: 'el-icon-pie-chart', tone: 'is-violet', value: value('powerFactorLowCount'), warn: Number(value('powerFactorLowCount')) > 0 },
+        { label: 'THD 超限', icon: 'el-icon-data-line', tone: 'is-slate', value: value('thdExceededCount'), warn: Number(value('thdExceededCount')) > 0 },
         { label: '不平衡超限', icon: 'el-icon-odometer', tone: 'is-slate', value: value('unbalanceExceededCount'), warn: Number(value('unbalanceExceededCount')) > 0 }
       ]
     },
